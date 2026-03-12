@@ -5,6 +5,7 @@ class ReportModule {
         this.SQL = SQL;
         this.charts = {};
         this.currentTable = "data_(ACE)";
+        this.yoyMode = false;
     }
     
     // 모바일 최적화된 차트 옵션 생성
@@ -237,9 +238,10 @@ class ReportModule {
                             </select>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;">
+                    <div style="display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; align-items: center;">
                         <button id="applyFilter" style="flex: 1; min-width: 120px; max-width: 200px; padding: 12px 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.95em; transition: transform 0.2s;">필터 적용</button>
                         <button id="resetFilter" style="flex: 1; min-width: 120px; max-width: 200px; padding: 12px 30px; background: #6c757d; color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.95em; transition: transform 0.2s;">초기화</button>
+                        <button id="yoyToggle" style="flex: 1; min-width: 120px; max-width: 200px; padding: 12px 30px; background: #dee2e6; color: #adb5bd; border: none; border-radius: 8px; font-weight: 600; cursor: not-allowed; font-size: 0.95em; transition: all 0.3s; opacity: 0.6;" disabled>📊 전년 대비</button>
                     </div>
                     
                     <!-- 모바일 최적화 CSS -->
@@ -500,9 +502,50 @@ class ReportModule {
             document.getElementById('monthFilter').value = '';
             document.getElementById('purposeFilter').value = '';
             document.getElementById('sellerFilter').value = '';
+            this.yoyMode = false;
+            this.updateYoyButton();
+            this.loadData();
+        });
+        
+        // 년도/월 변경 시 전년 대비 버튼 활성화 상태 업데이트
+        document.getElementById('yearFilter').addEventListener('change', () => this.updateYoyButton());
+        document.getElementById('monthFilter').addEventListener('change', () => this.updateYoyButton());
+        
+        // 전년 대비 토글
+        document.getElementById('yoyToggle').addEventListener('click', () => {
+            this.yoyMode = !this.yoyMode;
+            this.updateYoyButton();
             this.loadData();
         });
 
+    }
+    
+    updateYoyButton() {
+        const btn = document.getElementById('yoyToggle');
+        const year = document.getElementById('yearFilter').value;
+        const month = document.getElementById('monthFilter').value;
+        const canActivate = year && month;
+        
+        if (!canActivate) {
+            this.yoyMode = false;
+            btn.disabled = true;
+            btn.style.background = '#dee2e6';
+            btn.style.color = '#adb5bd';
+            btn.style.cursor = 'not-allowed';
+            btn.style.opacity = '0.6';
+        } else if (this.yoyMode) {
+            btn.disabled = false;
+            btn.style.background = 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)';
+            btn.style.color = 'white';
+            btn.style.cursor = 'pointer';
+            btn.style.opacity = '1';
+        } else {
+            btn.disabled = false;
+            btn.style.background = '#e9ecef';
+            btn.style.color = '#495057';
+            btn.style.cursor = 'pointer';
+            btn.style.opacity = '1';
+        }
     }
     
     loadFilters() {
@@ -581,8 +624,17 @@ class ReportModule {
         const seller = document.getElementById('sellerFilter').value;
         
         let condition = '';
-        if (year) condition += ` AND YEAR = ${year}`;
-        if (month) condition += ` AND MONTH = ${month}`;
+        if (year) {
+            if (this.yoyMode && month) {
+                // 전년 대비 모드: 1월~선택월 누계
+                condition += ` AND YEAR = ${year} AND MONTH <= ${month}`;
+            } else {
+                condition += ` AND YEAR = ${year}`;
+                if (month) condition += ` AND MONTH = ${month}`;
+            }
+        } else {
+            if (month) condition += ` AND MONTH = ${month}`;
+        }
         if (purpose) condition += ` AND 구매용도 = '${purpose}'`;
         if (seller) condition += ` AND 판매자 = '${seller}'`;
         
@@ -593,9 +645,30 @@ class ReportModule {
         try {
             const filter = this.getFilterCondition();
             const currentYear = document.getElementById('yearFilter').value;
+            const currentMonth = document.getElementById('monthFilter').value;
             const prevYear = currentYear ? parseInt(currentYear) - 1 : null;
             
+            // 전년 대비 모드 정보를 전달
+            this._yoyInfo = null;
+            if (this.yoyMode && currentYear && currentMonth) {
+                this._yoyInfo = { currentYear: parseInt(currentYear), prevYear, month: parseInt(currentMonth) };
+            }
+            
             this.updateStats(filter, prevYear);
+            
+            // 데이터 소스 정보 업데이트
+            const dataSourceEl = document.getElementById('dataSourceInfo');
+            const tableName = this.currentTable === 'data_(ACE)' ? 'ACE 판매 데이터' : 'ESSA 판매 데이터';
+            if (this.yoyMode && currentYear && currentMonth) {
+                dataSourceEl.textContent = `현재 데이터: ${tableName} | 📊 전년 대비 모드 (${currentYear}년 1~${currentMonth}월 누계 vs ${prevYear}년 1~${currentMonth}월 누계)`;
+                dataSourceEl.style.background = '#fce4ec';
+                dataSourceEl.style.color = '#c62828';
+            } else {
+                dataSourceEl.textContent = `현재 데이터: ${tableName}`;
+                dataSourceEl.style.background = '#e3f2fd';
+                dataSourceEl.style.color = '#1976d2';
+            }
+            
             this.loadMonthlySalesChart(filter, prevYear);
             this.loadMonthlyOrdersChart(filter, prevYear);
             this.loadPurposeChart(filter, prevYear);
