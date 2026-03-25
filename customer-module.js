@@ -125,23 +125,9 @@ class CustomerModule {
         document.getElementById('customerYear').addEventListener('change', () => this.updateDependentFilters());
         document.getElementById('customerMonth').addEventListener('change', () => this.updateDependentFilters());
         document.getElementById('customerReset').addEventListener('click', () => {
-            // 현재 날짜로 리셋
-            const now = new Date();
-            const currentYear = now.getFullYear();
-            const currentMonth = now.getMonth() + 1;
-            
-            const yearSelect = document.getElementById('customerYear');
-            const cache = this.filterCache[this.currentTab];
-            
-            if (cache && cache.years.includes(currentYear)) {
-                yearSelect.value = currentYear;
-            } else if (cache && cache.years.length > 0) {
-                yearSelect.value = cache.years[0];
-            } else {
-                yearSelect.value = '';
-            }
-            
-            document.getElementById('customerMonth').value = currentMonth;
+            // 전체로 리셋
+            document.getElementById('customerYear').value = '';
+            document.getElementById('customerMonth').value = '';
             document.getElementById('customerName').value = '';
             document.getElementById('customerRegion').value = '';
             this.searchResults = [];
@@ -239,14 +225,9 @@ class CustomerModule {
                 });
             }
             
-            // 디폴트 값 설정: 현재 년도와 월
-            if (yearOptions.includes(currentYear)) {
-                yearSelect.value = currentYear;
-            } else if (yearOptions.length > 0) {
-                yearSelect.value = yearOptions[0]; // 최신 년도
-            }
-            
-            document.getElementById('customerMonth').value = currentMonth;
+            // 디폴트 값 설정: 전체
+            yearSelect.value = '';
+            document.getElementById('customerMonth').value = '';
             
         } catch (error) {
             console.error('필터 로드 오류:', error);
@@ -280,14 +261,9 @@ class CustomerModule {
                 regionSelect.innerHTML += `<option value="${region}">${region}</option>`;
             });
             
-            // 디폴트 값 설정: 현재 년도와 월
-            if (cache.years.includes(currentYear)) {
-                yearSelect.value = currentYear;
-            } else if (cache.years.length > 0) {
-                yearSelect.value = cache.years[0]; // 최신 년도
-            }
-            
-            document.getElementById('customerMonth').value = currentMonth;
+            // 디폴트 값 설정: 전체
+            yearSelect.value = '';
+            document.getElementById('customerMonth').value = '';
             
             // 년도/월 변경에 따른 종속 필터 업데이트
             this.updateDependentFilters();
@@ -496,9 +472,16 @@ class CustomerModule {
                 cardHTML += `<div style="margin: 12px 0; border-top: 1px solid #e9ecef; padding-top: 12px;"></div>`;
             }
             
-            // 상품 정보 조합
+            // 상품 정보 조합 (타입 정보 포함: -T, -E, -N, -C, -A)
             const productParts = [];
-            if (record['상품명']) productParts.push(record['상품명']);
+            if (record['상품명']) {
+                let productName = record['상품명'];
+                const typeValue = record['타입'];
+                if (typeValue && String(typeValue).trim() !== '') {
+                    productName += '-' + String(typeValue).trim();
+                }
+                productParts.push(productName);
+            }
             if (record['규격']) productParts.push(record['규격']);
             if (record['등급'] && this.currentTab === 'ACE') productParts.push(record['등급']);
             if (record['소재'] && this.currentTab === 'ESSA') productParts.push(record['소재']);

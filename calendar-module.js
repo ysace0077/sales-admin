@@ -825,9 +825,16 @@ class CalendarModule {
             // 브랜드 정보 (테이블명에서 추출)
             const brand = record._tableName ? record._tableName.replace('data_(', '').replace(')', '') : '';
             
-            // 상품 정보 조합
+            // 상품 정보 조합 (타입 정보 포함: -T, -E, -N, -C, -A)
             const productParts = [];
-            if (record['상품명']) productParts.push(record['상품명']);
+            if (record['상품명']) {
+                let productName = record['상품명'];
+                const typeValue = record['타입'];
+                if (typeValue && String(typeValue).trim() !== '') {
+                    productName += '-' + String(typeValue).trim();
+                }
+                productParts.push(productName);
+            }
             if (record['규격']) productParts.push(record['규격']);
             if (record['등급'] && brand === 'ACE') productParts.push(record['등급']);
             if (record['소재'] && brand === 'ESSA') productParts.push(record['소재']);
