@@ -43,26 +43,6 @@ class CustomerModule {
                         padding: 14px !important;
                         border-radius: 12px !important;
                     }
-                    .customer-card-row {
-                        flex-direction: column !important;
-                        flex-wrap: wrap !important;
-                    }
-                    .customer-card-label {
-                        margin-right: 0 !important;
-                        margin-bottom: 2px;
-                        font-size: 0.85em;
-                    }
-                    .customer-card-value {
-                        font-size: 0.95em;
-                        white-space: nowrap !important;
-                        overflow: hidden !important;
-                        text-overflow: ellipsis !important;
-                    }
-                    .customer-card-value.product-value {
-                        white-space: normal !important;
-                        overflow: visible !important;
-                        text-overflow: unset !important;
-                    }
                 }
             </style>
             <div style="background: white; border-radius: 15px; padding: 20px; box-shadow: 0 5px 20px rgba(0,0,0,0.1);">
