@@ -576,9 +576,9 @@ class CustomerModule {
                 
                 if (productInfo) {
                     cardHTML += `
-                        <div class="customer-card-row">
-                            <span class="customer-card-label">상품:</span>
-                            <span class="customer-card-value product-value" style="color: #667eea; font-weight: 600;">${productInfo}</span>
+                        <div style="margin-bottom: 8px;">
+                            <span class="customer-card-label">상품:</span><br>
+                            <span style="color: #667eea; font-weight: 600;">▶${productInfo}</span>
                         </div>
                     `;
                 }
