@@ -505,9 +505,6 @@ class CustomerModule {
                 if (dateIndex > 0) {
                     cardHTML += `<div style="margin: 16px 0; border-top: 3px solid #667eea; padding-top: 16px; opacity: 0.4;"></div>`;
                 }
-                cardHTML += `
-                    <div style="font-size: 1.05em; font-weight: 700; color: #667eea; margin-bottom: 8px;">${dateIndex + 1}.</div>
-                `;
             }
             
             // 위치 정보
