@@ -390,13 +390,11 @@ class CustomerModule {
         
         data.forEach((row, index) => {
             const customerName = row['고객명'] || '알 수 없음';
-            const customerNumber = row['고객번호'] || '';
-            const key = `${customerName}_${customerNumber}`;
+            const key = customerName;
             
             if (!groups.has(key)) {
                 groups.set(key, {
                     customerName,
-                    customerNumber,
                     records: []
                 });
             }
@@ -411,11 +409,26 @@ class CustomerModule {
     }
     
     createCustomerCard(group) {
-        const { customerName, customerNumber, records } = group;
-        const firstRecord = records[0];
+        const { customerName, records } = group;
         
-        // 위치 정보 추출
-        const locationInfo = this.extractLocationInfo(firstRecord);
+        // 판매일 기준으로 서브그룹화 (날짜순 정렬)
+        const dateGroups = new Map();
+        records.forEach(record => {
+            const saleDate = record['판매일'] || '미정';
+            if (!dateGroups.has(saleDate)) {
+                dateGroups.set(saleDate, []);
+            }
+            dateGroups.get(saleDate).push(record);
+        });
+        
+        // 날짜순 정렬
+        const sortedDateKeys = Array.from(dateGroups.keys()).sort((a, b) => {
+            if (a === '미정') return 1;
+            if (b === '미정') return -1;
+            return String(a).localeCompare(String(b));
+        });
+        
+        const isMultiDate = sortedDateKeys.length > 1;
         
         let cardHTML = `
             <div style="background: white; border: none; border-radius: 16px; padding: 24px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06); border-left: 5px solid #667eea;">
@@ -427,125 +440,149 @@ class CustomerModule {
                         <div style="font-size: 1.2em; font-weight: 700; color: #212529;">
                             ${customerName}
                         </div>
-                        ${locationInfo ? `<div style="font-size: 0.85em; color: #6c757d; padding: 6px 12px; background: #e9ecef; border-radius: 8px; font-weight: 600;">${locationInfo}</div>` : ''}
                     </div>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.95em; line-height: 1.6;">
         `;
         
-        // 판매일 정보
-        if (firstRecord['판매일']) {
-            const formattedDate = this.formatDateWithDay(firstRecord['판매일']);
-            cardHTML += `
-                <div style="margin-bottom: 8px;">
-                    <span style="font-weight: 700; color: #495057;">판매일:</span>
-                    <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDate}</span>
-                </div>
-            `;
-        }
-        
-        // 판매자 정보
-        if (firstRecord['판매자']) {
-            cardHTML += `
-                <div style="margin-bottom: 8px;">
-                    <span style="font-weight: 700; color: #495057;">판매자:</span>
-                    <span style="color: #212529; font-weight: 600; margin-left: 8px;">${firstRecord['판매자']}</span>
-                </div>
-            `;
-        }
-        
-        // 배송일 정보 (있는 경우)
-        if (firstRecord['배송일'] || firstRecord['배송예정일']) {
-            const deliveryDate = firstRecord['배송일'] || firstRecord['배송예정일'] || '미정';
-            const formattedDeliveryDate = deliveryDate === '미정' ? '미정' : this.formatDateWithDay(deliveryDate);
-            cardHTML += `
-                <div style="margin-bottom: 12px;">
-                    <span style="font-weight: 700; color: #495057;">배송일:</span>
-                    <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDeliveryDate}</span>
-                </div>
-            `;
-        }
-        
-        // 각 상품별 정보
-        records.forEach((record, index) => {
-            if (index > 0) {
-                cardHTML += `<div style="margin: 12px 0; border-top: 1px solid #e9ecef; padding-top: 12px;"></div>`;
-            }
+        sortedDateKeys.forEach((dateKey, dateIndex) => {
+            const dateRecords = dateGroups.get(dateKey);
+            const firstRecord = dateRecords[0];
             
-            // 상품 정보 조합 (타입 정보 포함: -T, -E, -N, -C, -A)
-            const productParts = [];
-            if (record['상품명']) {
-                let productName = record['상품명'];
-                const typeValue = record['타입'];
-                if (typeValue && String(typeValue).trim() !== '') {
-                    productName += '-' + String(typeValue).trim();
+            // 복수 날짜인 경우 구분선 및 번호 표기
+            if (isMultiDate) {
+                if (dateIndex > 0) {
+                    cardHTML += `<div style="margin: 16px 0; border-top: 3px solid #667eea; padding-top: 16px; opacity: 0.4;"></div>`;
                 }
-                productParts.push(productName);
+                cardHTML += `
+                    <div style="font-size: 1.05em; font-weight: 700; color: #667eea; margin-bottom: 8px;">${dateIndex + 1}.</div>
+                `;
             }
-            if (record['규격']) productParts.push(record['규격']);
-            if (record['등급'] && this.currentTab === 'ACE') productParts.push(record['등급']);
-            if (record['소재'] && this.currentTab === 'ESSA') productParts.push(record['소재']);
-            if (record['색상']) productParts.push(record['색상']);
-            if (record['수량']) productParts.push(`${record['수량']}개`);
             
-            const productInfo = productParts.join(' / ');
-            
-            if (productInfo) {
+            // 위치 정보
+            const locationInfo = this.extractLocationInfo(firstRecord);
+            if (locationInfo) {
                 cardHTML += `
                     <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">상품:</span>
-                        <span style="color: #667eea; font-weight: 600; margin-left: 8px;">${productInfo}</span>
+                        <span style="font-size: 0.85em; color: #6c757d; padding: 6px 12px; background: #e9ecef; border-radius: 8px; font-weight: 600;">${locationInfo}</span>
                     </div>
                 `;
             }
             
-            // 구매용도
-            if (record['구매용도']) {
+            // 판매일 정보
+            if (firstRecord['판매일']) {
+                const formattedDate = this.formatDateWithDay(firstRecord['판매일']);
                 cardHTML += `
                     <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">구매용도:</span>
-                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${record['구매용도']}</span>
+                        <span style="font-weight: 700; color: #495057;">판매일:</span>
+                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDate}</span>
                     </div>
                 `;
             }
             
-            // 금액 정보
-            if (record['할인가'] || record['출고가']) {
-                const amount = record['할인가'] || record['출고가'];
-                const isDiscounted = record['할인가'] ? true : false;
+            // 판매자 정보
+            if (firstRecord['판매자']) {
+                cardHTML += `
+                    <div style="margin-bottom: 8px;">
+                        <span style="font-weight: 700; color: #495057;">판매자:</span>
+                        <span style="color: #212529; font-weight: 600; margin-left: 8px;">${firstRecord['판매자']}</span>
+                    </div>
+                `;
+            }
+            
+            // 배송일 정보
+            if (firstRecord['배송일'] || firstRecord['배송예정일']) {
+                const deliveryDate = firstRecord['배송일'] || firstRecord['배송예정일'] || '미정';
+                const formattedDeliveryDate = deliveryDate === '미정' ? '미정' : this.formatDateWithDay(deliveryDate);
+                cardHTML += `
+                    <div style="margin-bottom: 12px;">
+                        <span style="font-weight: 700; color: #495057;">배송일:</span>
+                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDeliveryDate}</span>
+                    </div>
+                `;
+            }
+            
+            // 해당 날짜의 각 상품별 정보
+            dateRecords.forEach((record, index) => {
+                if (index > 0) {
+                    cardHTML += `<div style="margin: 12px 0; border-top: 1px solid #e9ecef; padding-top: 12px;"></div>`;
+                }
                 
-                cardHTML += `
-                    <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">금액:</span>
-                        <span style="color: #10b981; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">
-                            ${parseInt(amount).toLocaleString()}원
-                        </span>
-                        ${isDiscounted ? '<span style="color: #ef4444; font-weight: 600; margin-left: 4px;">(할인가)</span>' : ''}
-                    </div>
-                `;
-            }
-            
-            // 결제 정보
-            const paymentInfo = this.getPaymentInfo(record);
-            if (paymentInfo) {
-                cardHTML += `
-                    <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">결제:</span>
-                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${paymentInfo}</span>
-                    </div>
-                `;
-            }
-            
-            // 할인율 - 수정된 부분
-            const discountRate = this.getDiscountRate(record);
-            if (discountRate) {
-                cardHTML += `
-                    <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">할인율:</span>
-                        <span style="color: #f97316; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">${discountRate}</span>
-                    </div>
-                `;
-            }
+                // 상품 정보 조합 (타입 정보 포함: -T, -E, -N, -C, -A)
+                const productParts = [];
+                if (record['상품명']) {
+                    let productName = record['상품명'];
+                    const typeValue = record['타입'];
+                    if (typeValue && String(typeValue).trim() !== '') {
+                        productName += '-' + String(typeValue).trim();
+                    }
+                    productParts.push(productName);
+                }
+                if (record['규격']) productParts.push(record['규격']);
+                if (record['등급'] && this.currentTab === 'ACE') productParts.push(record['등급']);
+                if (record['소재'] && this.currentTab === 'ESSA') productParts.push(record['소재']);
+                if (record['색상']) productParts.push(record['색상']);
+                if (record['수량']) productParts.push(`${record['수량']}개`);
+                
+                const productInfo = productParts.join(' / ');
+                
+                if (productInfo) {
+                    cardHTML += `
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-weight: 700; color: #495057;">상품:</span>
+                            <span style="color: #667eea; font-weight: 600; margin-left: 8px;">${productInfo}</span>
+                        </div>
+                    `;
+                }
+                
+                // 구매용도
+                if (record['구매용도']) {
+                    cardHTML += `
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-weight: 700; color: #495057;">구매용도:</span>
+                            <span style="color: #212529; font-weight: 500; margin-left: 8px;">${record['구매용도']}</span>
+                        </div>
+                    `;
+                }
+                
+                // 금액 정보
+                if (record['할인가'] || record['출고가']) {
+                    const amount = record['할인가'] || record['출고가'];
+                    const isDiscounted = record['할인가'] ? true : false;
+                    
+                    cardHTML += `
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-weight: 700; color: #495057;">금액:</span>
+                            <span style="color: #10b981; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">
+                                ${parseInt(amount).toLocaleString()}원
+                            </span>
+                            ${isDiscounted ? '<span style="color: #ef4444; font-weight: 600; margin-left: 4px;">(할인가)</span>' : ''}
+                        </div>
+                    `;
+                }
+                
+                // 결제 정보
+                const paymentInfo = this.getPaymentInfo(record);
+                if (paymentInfo) {
+                    cardHTML += `
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-weight: 700; color: #495057;">결제:</span>
+                            <span style="color: #212529; font-weight: 500; margin-left: 8px;">${paymentInfo}</span>
+                        </div>
+                    `;
+                }
+                
+                // 할인율
+                const discountRate = this.getDiscountRate(record);
+                if (discountRate) {
+                    cardHTML += `
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-weight: 700; color: #495057;">할인율:</span>
+                            <span style="color: #f97316; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">${discountRate}</span>
+                        </div>
+                    `;
+                }
+            });
         });
         
         cardHTML += `
