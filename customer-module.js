@@ -15,20 +15,53 @@ class CustomerModule {
         const container = document.getElementById('customerTab');
         container.innerHTML = `
             <style>
+                .customer-card-label {
+                    font-weight: 700;
+                    color: #495057;
+                    white-space: nowrap;
+                    margin-right: 8px;
+                }
+                .customer-card-row {
+                    margin-bottom: 8px;
+                    display: flex;
+                    flex-wrap: nowrap;
+                    align-items: baseline;
+                }
+                .customer-card-value {
+                    overflow-wrap: break-word;
+                    word-break: break-word;
+                    min-width: 0;
+                    flex: 1;
+                }
                 @media (max-width: 600px) {
                     #customerResults {
-                        padding: 10px !important;
-                        gap: 12px !important;
+                        padding: 8px !important;
+                        gap: 10px !important;
+                        grid-template-columns: 1fr !important;
                     }
                     #customerResults > div {
-                        padding: 16px !important;
+                        padding: 14px !important;
                         border-radius: 12px !important;
                     }
-                    #customerResults .info-value,
-                    #customerResults span {
+                    .customer-card-row {
+                        flex-direction: column !important;
+                        flex-wrap: wrap !important;
+                    }
+                    .customer-card-label {
+                        margin-right: 0 !important;
+                        margin-bottom: 2px;
+                        font-size: 0.85em;
+                    }
+                    .customer-card-value {
+                        font-size: 0.95em;
+                        white-space: nowrap !important;
+                        overflow: hidden !important;
+                        text-overflow: ellipsis !important;
+                    }
+                    .customer-card-value.product-value {
                         white-space: normal !important;
-                        word-break: break-all !important;
-                        overflow-wrap: break-word !important;
+                        overflow: visible !important;
+                        text-overflow: unset !important;
                     }
                 }
             </style>
@@ -491,9 +524,9 @@ class CustomerModule {
             if (firstRecord['판매일']) {
                 const formattedDate = this.formatDateWithDay(firstRecord['판매일']);
                 cardHTML += `
-                    <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">판매일:</span>
-                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDate}</span>
+                    <div class="customer-card-row">
+                        <span class="customer-card-label">판매일:</span>
+                        <span class="customer-card-value" style="color: #212529; font-weight: 500;">${formattedDate}</span>
                     </div>
                 `;
             }
@@ -501,9 +534,9 @@ class CustomerModule {
             // 판매자 정보
             if (firstRecord['판매자']) {
                 cardHTML += `
-                    <div style="margin-bottom: 8px;">
-                        <span style="font-weight: 700; color: #495057;">판매자:</span>
-                        <span style="color: #212529; font-weight: 600; margin-left: 8px;">${firstRecord['판매자']}</span>
+                    <div class="customer-card-row">
+                        <span class="customer-card-label">판매자:</span>
+                        <span class="customer-card-value" style="color: #212529; font-weight: 600;">${firstRecord['판매자']}</span>
                     </div>
                 `;
             }
@@ -513,9 +546,9 @@ class CustomerModule {
                 const deliveryDate = firstRecord['배송일'] || firstRecord['배송예정일'] || '미정';
                 const formattedDeliveryDate = deliveryDate === '미정' ? '미정' : this.formatDateWithDay(deliveryDate);
                 cardHTML += `
-                    <div style="margin-bottom: 12px;">
-                        <span style="font-weight: 700; color: #495057;">배송일:</span>
-                        <span style="color: #212529; font-weight: 500; margin-left: 8px;">${formattedDeliveryDate}</span>
+                    <div class="customer-card-row" style="margin-bottom: 12px;">
+                        <span class="customer-card-label">배송일:</span>
+                        <span class="customer-card-value" style="color: #212529; font-weight: 500;">${formattedDeliveryDate}</span>
                     </div>
                 `;
             }
@@ -546,9 +579,9 @@ class CustomerModule {
                 
                 if (productInfo) {
                     cardHTML += `
-                        <div style="margin-bottom: 8px;">
-                            <span style="font-weight: 700; color: #495057;">상품:</span>
-                            <span style="color: #667eea; font-weight: 600; margin-left: 8px;">${productInfo}</span>
+                        <div class="customer-card-row">
+                            <span class="customer-card-label">상품:</span>
+                            <span class="customer-card-value product-value" style="color: #667eea; font-weight: 600;">${productInfo}</span>
                         </div>
                     `;
                 }
@@ -556,9 +589,9 @@ class CustomerModule {
                 // 구매용도
                 if (record['구매용도']) {
                     cardHTML += `
-                        <div style="margin-bottom: 8px;">
-                            <span style="font-weight: 700; color: #495057;">구매용도:</span>
-                            <span style="color: #212529; font-weight: 500; margin-left: 8px;">${record['구매용도']}</span>
+                        <div class="customer-card-row">
+                            <span class="customer-card-label">구매용도:</span>
+                            <span class="customer-card-value" style="color: #212529; font-weight: 500;">${record['구매용도']}</span>
                         </div>
                     `;
                 }
@@ -569,12 +602,11 @@ class CustomerModule {
                     const isDiscounted = record['할인가'] ? true : false;
                     
                     cardHTML += `
-                        <div style="margin-bottom: 8px;">
-                            <span style="font-weight: 700; color: #495057;">금액:</span>
-                            <span style="color: #10b981; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">
-                                ${parseInt(amount).toLocaleString()}원
+                        <div class="customer-card-row">
+                            <span class="customer-card-label">금액:</span>
+                            <span class="customer-card-value" style="color: #10b981; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace;">
+                                ${parseInt(amount).toLocaleString()}원${isDiscounted ? ' <span style="color: #ef4444; font-weight: 600;">(할인가)</span>' : ''}
                             </span>
-                            ${isDiscounted ? '<span style="color: #ef4444; font-weight: 600; margin-left: 4px;">(할인가)</span>' : ''}
                         </div>
                     `;
                 }
@@ -583,9 +615,9 @@ class CustomerModule {
                 const paymentInfo = this.getPaymentInfo(record);
                 if (paymentInfo) {
                     cardHTML += `
-                        <div style="margin-bottom: 8px;">
-                            <span style="font-weight: 700; color: #495057;">결제:</span>
-                            <span style="color: #212529; font-weight: 500; margin-left: 8px;">${paymentInfo}</span>
+                        <div class="customer-card-row">
+                            <span class="customer-card-label">결제:</span>
+                            <span class="customer-card-value" style="color: #212529; font-weight: 500;">${paymentInfo}</span>
                         </div>
                     `;
                 }
@@ -594,9 +626,9 @@ class CustomerModule {
                 const discountRate = this.getDiscountRate(record);
                 if (discountRate) {
                     cardHTML += `
-                        <div style="margin-bottom: 8px;">
-                            <span style="font-weight: 700; color: #495057;">할인율:</span>
-                            <span style="color: #f97316; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace; margin-left: 8px;">${discountRate}</span>
+                        <div class="customer-card-row">
+                            <span class="customer-card-label">할인율:</span>
+                            <span class="customer-card-value" style="color: #f97316; font-weight: 700; font-family: 'SF Mono', Monaco, 'Courier New', monospace;">${discountRate}</span>
                         </div>
                     `;
                 }
