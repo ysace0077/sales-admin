@@ -14,6 +14,24 @@ class CustomerModule {
     render() {
         const container = document.getElementById('customerTab');
         container.innerHTML = `
+            <style>
+                @media (max-width: 600px) {
+                    #customerResults {
+                        padding: 10px !important;
+                        gap: 12px !important;
+                    }
+                    #customerResults > div {
+                        padding: 16px !important;
+                        border-radius: 12px !important;
+                    }
+                    #customerResults .info-value,
+                    #customerResults span {
+                        white-space: normal !important;
+                        word-break: break-all !important;
+                        overflow-wrap: break-word !important;
+                    }
+                }
+            </style>
             <div style="background: white; border-radius: 15px; padding: 20px; box-shadow: 0 5px 20px rgba(0,0,0,0.1);">
                 <div style="display: flex; gap: 10px; margin-bottom: 20px; justify-content: center;">
                     <button class="customer-tab active" data-tab="ACE" style="padding: 15px 40px; border: none; border-radius: 10px; font-size: 1.1em; font-weight: 600; cursor: pointer; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
@@ -66,7 +84,7 @@ class CustomerModule {
                             <button id="customerNext" style="padding: 8px 15px; border: 2px solid #e1e5e9; background: white; border-radius: 8px; cursor: pointer; font-weight: 600;">▶</button>
                         </div>
                     </div>
-                    <div id="customerResults" style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 20px; background: #f8f9fa;">
+                    <div id="customerResults" style="padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr)); gap: 20px; background: #f8f9fa;">
                         <div style="grid-column: 1 / -1; text-align: center; padding: 80px 20px; color: #6c757d;">
                             <div style="font-size: 4em; margin-bottom: 20px; opacity: 0.4;">📇</div>
                             <div style="font-size: 1.2em; font-weight: 600;">데이터를 검색해주세요</div>
@@ -431,7 +449,7 @@ class CustomerModule {
         const isMultiDate = sortedDateKeys.length > 1;
         
         let cardHTML = `
-            <div style="background: white; border: none; border-radius: 16px; padding: 24px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06); border-left: 5px solid #667eea;">
+            <div style="background: white; border: none; border-radius: 16px; padding: 24px; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); position: relative; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06); border-left: 5px solid #667eea; overflow-wrap: break-word; word-break: break-word;">
                 <div style="margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #e9ecef;">
                     <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                         <div style="font-size: 1.3em; font-weight: 700; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
