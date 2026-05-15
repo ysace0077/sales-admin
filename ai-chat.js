@@ -1,5 +1,5 @@
 // AI Chat Module - Ollama 연동
-const OLLAMA_URL = 'https://yeosusquare.cloud/api/chat';
+const apiUrl = '/ollama/api/generate';
 const AI_MODEL = 'exaone3.5:7.8b'; // 한국어 최적 모델
 
 // 판매 데이터 컨텍스트 생성
