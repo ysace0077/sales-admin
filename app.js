@@ -7,6 +7,7 @@ class IntegratedSalesApp {
         this.reportModule = null;
         this.customerModule = null;
         this.calendarModule = null;
+        this.aiModule = null;
         
         this.init();
     }
@@ -101,6 +102,9 @@ class IntegratedSalesApp {
             case 'calendar':
                 this.loadCalendarModule();
                 break;
+            case 'ai':
+                this.loadAIModule();
+                break;
         }
     }
     
@@ -129,6 +133,13 @@ class IntegratedSalesApp {
             this.calendarModule.render();
         }
         window.calendarModule = this.calendarModule;
+    }
+
+    loadAIModule() {
+        if (!this.aiModule) {
+            this.aiModule = new AIAssistantModule(this.db, this.SQL);
+        }
+        this.aiModule.render();
     }
     
     resizeAllCharts(charts) {

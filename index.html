@@ -120,6 +120,16 @@
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
         
+        .main-tab.ai-tab:not(.active) {
+            background: #fdf0ff;
+            color: #9c27b0;
+        }
+        
+        .main-tab.ai-tab.active {
+            background: linear-gradient(135deg, #f093fb 0%, #764ba2 100%);
+            box-shadow: 0 4px 12px rgba(240, 147, 251, 0.4);
+        }
+        
         /* 탭 컨텐츠 */
         .tab-content {
             display: none;
@@ -211,12 +221,16 @@
             <div class="main-tab" data-tab="customer">
                 👥 고객 조회
             </div>
+            <div class="main-tab ai-tab" data-tab="ai">
+                🤖 AI 분석
+            </div>
         </div>
         
         <!-- 탭 컨텐츠 영역 -->
         <div id="reportTab" class="tab-content active"></div>
         <div id="customerTab" class="tab-content"></div>
         <div id="calendarTab" class="tab-content"></div>
+        <div id="aiTab" class="tab-content"></div>
     </div>
     
     <script src="supabase-db.js?v=7"></script>
@@ -229,6 +243,7 @@
     <script src="report-charts-6.js?v=6"></script>
     <script src="customer-module.js?v=2"></script>
     <script src="calendar-module.js?v=2"></script>
-    <script src="app.js?v=2"></script>
+    <script src="ai-assistant-module.js?v=6"></script>
+    <script src="app.js?v=3"></script>
 </body>
 </html>
