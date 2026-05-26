@@ -1,4 +1,10 @@
-// AI 매출 분석 어시스턴트 모듈
+// AI 매출 분석 어시스턴트 모듈 (v2 - 자연어 기반 동적 컨텍스트)
+// 설계 핵심:
+//  1) UI 필터 드롭다운 제거 → 모델 선택만 유지
+//  2) 사용자 자연어 질문에서 엔티티(브랜드/연도/월/비교) 추출
+//  3) 추출 결과로 SQL을 동적 실행해 필요한 데이터만 컨텍스트로 주입
+//  4) 빠른 질문 버튼은 시점/브랜드가 자연어로 명시된 완전한 문장
+//  5) 멀티턴 대화 지원
 class AIAssistantModule {
     constructor(db, SQL) {
         this.db = db;
@@ -6,244 +12,341 @@ class AIAssistantModule {
         this.apiKey = 'sk-c47d975549724aa69122b84db54dd4cb';
         this.apiUrl = 'https://yeosusquare.cloud/ollama/api/generate';
         this.model = 'exaone3.5:7.8b';
-        this.chatHistory = [];
+        this.chatHistory = [];   // 멀티턴 대화 누적
         this.isLoading = false;
-        this.currentTable = 'data_(ACE)';
+        this._cachedSellers = null;
+        this._cachedRegions = null;
     }
 
-    // 현재 DB에서 핵심 통계 요약 생성
-    buildDataContext() {
-        try {
-            const ctx = [];
+    // ─────────────────────────────────────────────────────────────
+    // 1. 자연어에서 분석 조건(엔티티) 추출
+    // ─────────────────────────────────────────────────────────────
+    extractEntities(text) {
+        const ent = {
+            brands: [],
+            years: [],
+            months: [],
+            sellers: [],
+            regions: [],
+            hasYoY: false,        // 전년 동기 비교 키워드
+            hasMoM: false,        // 전월 비교
+            hasTrend: false,      // 추이/흐름
+            hasMargin: false,     // 마진 분석
+            hasRanking: false,    // 순위/TOP/베스트
+        };
+        const t = text || '';
+        const now = new Date();
+        const curY = now.getFullYear();
+        const curM = now.getMonth() + 1;
 
-            // 테이블별 요약
-            const tables = ['data_(ACE)', 'data_(ESSA)'];
-            tables.forEach(tbl => {
-                try {
-                    const brand = tbl.includes('ACE') ? 'ACE' : 'ESSA';
+        // 브랜드
+        if (/\bACE\b|에이스|침대/i.test(t)) ent.brands.push('ACE');
+        if (/\bESSA\b|에싸|에사|소파|가구/i.test(t)) ent.brands.push('ESSA');
+        if (/양\s*브랜드|두\s*브랜드|전체\s*브랜드|모든\s*브랜드|both/i.test(t)) {
+            ent.brands = ['ACE', 'ESSA'];
+        }
+        if (ent.brands.length === 0) ent.brands = ['ACE', 'ESSA']; // 미지정 시 양쪽
 
-                    // 전체 기간 매출 합계
-                    const totalR = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량) FROM "${tbl}"`);
-                    if (totalR.length > 0 && totalR[0].values[0][0]) {
-                        const [total, cnt, qty] = totalR[0].values[0];
-                        ctx.push(`[${brand}] 전체 매출합계: ${Math.round(total).toLocaleString()}원, 거래건수: ${cnt}건, 판매수량: ${qty}개`);
-                    }
+        // 절대 연도
+        const yMatch = t.match(/20\d{2}/g);
+        if (yMatch) ent.years.push(...yMatch.map(Number));
+        // 상대 연도
+        if (/올해|금년|이번\s*해/.test(t)) ent.years.push(curY);
+        if (/작년|지난\s*해|전년(?!\s*동)/.test(t)) ent.years.push(curY - 1);
+        if (/재작년/.test(t)) ent.years.push(curY - 2);
 
-                    // 연도별 매출
-                    const yearR = this.db.exec(`SELECT YEAR, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR IS NOT NULL GROUP BY YEAR ORDER BY YEAR DESC LIMIT 3`);
-                    if (yearR.length > 0) {
-                        yearR[0].values.forEach(([yr, sum, cnt, mg]) => {
-                            if (yr && sum) {
-                                const mrate = (mg && sum > 0) ? ` 마진율 ${(mg/sum*100).toFixed(1)}%` : '';
-                                ctx.push(`[${brand}] ${yr}년 매출: ${Math.round(sum).toLocaleString()}원 (${cnt}건)${mrate}`);
-                            }
-                        });
-                    }
-
-                    // 최근 월 매출 (최신 연도 기준)
-                    const latestYearR = this.db.exec(`SELECT MAX(YEAR) FROM "${tbl}"`);
-                    if (latestYearR.length > 0 && latestYearR[0].values[0][0]) {
-                        const latestYear = latestYearR[0].values[0][0];
-                        const monthR = this.db.exec(`SELECT MONTH, SUM(할인가), COUNT(*) FROM "${tbl}" WHERE YEAR=${latestYear} GROUP BY MONTH ORDER BY MONTH DESC LIMIT 3`);
-                        if (monthR.length > 0) {
-                            monthR[0].values.forEach(([mo, sum, cnt]) => {
-                                if (mo && sum) ctx.push(`[${brand}] ${latestYear}년 ${mo}월 매출: ${Math.round(sum).toLocaleString()}원 (${cnt}건)`);
-                            });
-                        }
-                    }
-
-                    // 판매자별 매출 TOP3
-                    const sellerR = this.db.exec(`SELECT 판매자, SUM(할인가), COUNT(*) FROM "${tbl}" WHERE 판매자 IS NOT NULL GROUP BY 판매자 ORDER BY SUM(할인가) DESC LIMIT 3`);
-                    if (sellerR.length > 0) {
-                        sellerR[0].values.forEach(([seller, sum, cnt]) => {
-                            if (seller && sum) ctx.push(`[${brand}] 판매자 ${seller}: ${Math.round(sum).toLocaleString()}원 (${cnt}건)`);
-                        });
-                    }
-                } catch(e) { /* 테이블 없으면 스킵 */ }
+        // 월
+        const mMatch = t.match(/(\d{1,2})\s*월/g);
+        if (mMatch) {
+            mMatch.forEach(m => {
+                const num = parseInt(m);
+                if (num >= 1 && num <= 12) ent.months.push(num);
             });
-
-            return ctx.length > 0 ? ctx.join('\n') : '데이터 없음';
-        } catch(e) {
-            return '데이터 로드 오류';
         }
-    }
+        if (/이번\s*달|금월|이달/.test(t)) ent.months.push(curM);
+        if (/지난\s*달|전월/.test(t)) ent.months.push(curM === 1 ? 12 : curM - 1);
 
-    // 필터 적용된 컨텍스트 (현재 선택된 조건 반영)
-    buildFilteredContext(year, month, brand) {
+        // 비교/분석 키워드
+        if (/전년\s*동(기|월|기간)|작년\s*같은|YoY|전년\s*대비|작년\s*대비/i.test(t)) ent.hasYoY = true;
+        if (/전월\s*대비|MoM|지난\s*달\s*대비/i.test(t)) ent.hasMoM = true;
+        if (/추이|흐름|트렌드|변화|증감|성장/.test(t)) ent.hasTrend = true;
+        if (/마진|수익|이익률|마진율/.test(t)) ent.hasMargin = true;
+        if (/TOP|베스트|상위|순위|랭킹|많이/i.test(t)) ent.hasRanking = true;
+
+        // 중복 제거
+        ent.years = [...new Set(ent.years)].sort((a, b) => a - b);
+        ent.months = [...new Set(ent.months)].sort((a, b) => a - b);
+
+        // 판매자/지역 매칭 (DB에 저장된 실제 값과 부분 일치)
         try {
-            const tbl = brand === 'ACE' ? 'data_(ACE)' : 'data_(ESSA)';
-            const ctx = [];
-            let where = 'WHERE 1=1';
-            if (year) where += ` AND YEAR=${year}`;
-            if (month) where += ` AND MONTH=${month}`;
-
-            const label = `${brand}${year ? ' ' + year + '년' : ''}${month ? ' ' + month + '월' : ''}`;
-
-            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), AVG(할인가) FROM "${tbl}" ${where}`);
-            if (r.length > 0 && r[0].values[0][0]) {
-                const [total, cnt, qty, avg] = r[0].values[0];
-                ctx.push(`현재 조회 조건 [${label}]: 매출 ${Math.round(total).toLocaleString()}원, ${cnt}건, 수량 ${qty}개, 평균거래액 ${Math.round(avg).toLocaleString()}원`);
-            }
-
-            // 구매용도별
-            const purposeR = this.db.exec(`SELECT 구매용도, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 구매용도 IS NOT NULL GROUP BY 구매용도 ORDER BY SUM(할인가) DESC LIMIT 5`);
-            if (purposeR.length > 0) {
-                purposeR[0].values.forEach(([p, s, c]) => {
-                    if (p && s) ctx.push(`구매용도 [${p}]: ${Math.round(s).toLocaleString()}원 (${c}건)`);
+            if (!this._cachedSellers) {
+                const sellers = new Set();
+                ['data_(ACE)', 'data_(ESSA)'].forEach(tbl => {
+                    try {
+                        const r = this.db.exec(`SELECT DISTINCT 판매자 FROM "${tbl}" WHERE 판매자 IS NOT NULL`);
+                        if (r.length > 0) r[0].values.forEach(([s]) => s && sellers.add(s));
+                    } catch (e) {}
                 });
+                this._cachedSellers = [...sellers];
             }
-
-            // 지역별 TOP3
-            const regionR = this.db.exec(`SELECT 지역1, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 지역1 IS NOT NULL GROUP BY 지역1 ORDER BY SUM(할인가) DESC LIMIT 3`);
-            if (regionR.length > 0) {
-                regionR[0].values.forEach(([r2, s, c]) => {
-                    if (r2 && s) ctx.push(`지역 [${r2}]: ${Math.round(s).toLocaleString()}원 (${c}건)`);
-                });
-            }
-
-            // 마진 정보 (MG = 건당 마진액, 마진율 = SUM(MG)/SUM(할인가)*100)
-            const mgR = this.db.exec(`SELECT SUM("MG"), SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND "MG" IS NOT NULL AND "MG" != 0`);
-            if (mgR.length > 0 && mgR[0].values[0][0]) {
-                const [mgSum, salesSum, cnt] = mgR[0].values[0];
-                const marginRate = salesSum > 0 ? (mgSum / salesSum * 100).toFixed(1) : 0;
-                ctx.push(`마진합계: ${Math.round(mgSum).toLocaleString()}원, 마진율: ${marginRate}% (마진있는 건수: ${cnt}건)`);
-            }
-
-            return ctx.join('\n');
-        } catch(e) {
-            return '';
-        }
-    }
-
-    // 시스템 프롬프트 생성 - 필터 조건 반영
-    buildSystemPrompt(brand, year, month) {
-        const tbl = (brand === 'ESSA') ? 'data_(ESSA)' : 'data_(ACE)';
-        const brandName = (brand === 'ESSA') ? 'ESSA(소파/가구)' : 'ACE(침대)';
-        const periodLabel = `${year ? year + '년' : '전체 기간'} ${month ? month + '월' : '전체 월'}`;
-
-        // 필터 조건 WHERE 절 구성
-        let where = 'WHERE 1=1';
-        if (year) where += ` AND YEAR=${year}`;
-        if (month) where += ` AND MONTH=${month}`;
-
-        const ctx = [];
-        ctx.push(`=== 현재 분석 조건 ===`);
-        ctx.push(`브랜드: ${brandName}`);
-        ctx.push(`기간: ${periodLabel}`);
-        ctx.push('');
-        ctx.push(`=== 해당 조건의 실제 데이터 ===`);
+            this._cachedSellers.forEach(s => {
+                if (s && t.includes(s)) ent.sellers.push(s);
+            });
+        } catch (e) {}
 
         try {
-            // 기본 집계
-            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG") FROM "${tbl}" ${where}`);
-            if (r.length > 0 && r[0].values[0][0]) {
-                const [sales, cnt, qty, mg] = r[0].values[0];
-                const mrate = (mg && sales > 0) ? (mg/sales*100).toFixed(1) : 'N/A';
-                ctx.push(`총 매출: ${Math.round(sales).toLocaleString()}원`);
-                ctx.push(`거래 건수: ${cnt}건`);
-                ctx.push(`판매 수량: ${qty}개`);
-                ctx.push(`마진 합계: ${mg ? Math.round(mg).toLocaleString() : 'N/A'}원`);
-                ctx.push(`마진율: ${mrate}%`);
-                ctx.push(`평균 거래액: ${Math.round(sales/cnt).toLocaleString()}원`);
-            } else {
-                ctx.push('해당 조건의 데이터가 없습니다.');
+            if (!this._cachedRegions) {
+                const regions = new Set();
+                ['data_(ACE)', 'data_(ESSA)'].forEach(tbl => {
+                    try {
+                        const r = this.db.exec(`SELECT DISTINCT 지역1 FROM "${tbl}" WHERE 지역1 IS NOT NULL`);
+                        if (r.length > 0) r[0].values.forEach(([s]) => s && regions.add(s));
+                    } catch (e) {}
+                });
+                this._cachedRegions = [...regions];
             }
+            this._cachedRegions.forEach(rg => {
+                if (rg && t.includes(rg)) ent.regions.push(rg);
+            });
+        } catch (e) {}
 
-            // 월별 매출 (연도 선택 시)
-            if (year && !month) {
-                const mR = this.db.exec(`SELECT MONTH, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${where} GROUP BY MONTH ORDER BY MONTH`);
-                if (mR.length > 0 && mR[0].values.length > 0) {
-                    ctx.push('');
-                    ctx.push(`[${year}년 월별 매출]`);
-                    mR[0].values.forEach(([mo, s, c, mg]) => {
-                        const mr = (mg && s > 0) ? ` 마진율 ${(mg/s*100).toFixed(1)}%` : '';
-                        ctx.push(`  ${mo}월: ${Math.round(s).toLocaleString()}원 (${c}건)${mr}`);
+        return ent;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 2. 엔티티 기반 동적 컨텍스트 빌드
+    // ─────────────────────────────────────────────────────────────
+    buildContext(ent) {
+        const out = [];
+
+        // 비교 모드면 전년/전월 자동 확장
+        const targetYears = [...ent.years];
+        if (ent.hasYoY) {
+            ent.years.forEach(y => { if (!targetYears.includes(y - 1)) targetYears.push(y - 1); });
+        }
+        // 명시 연도 없으면 최근 2년 자동
+        let useRecent = targetYears.length === 0;
+
+        for (const brand of ent.brands) {
+            const tbl = brand === 'ESSA' ? 'data_(ESSA)' : 'data_(ACE)';
+            const label = brand === 'ESSA' ? 'ESSA(소파/가구)' : 'ACE(침대)';
+            out.push(`\n========== ${label} ==========`);
+
+            // 연도 범위 결정
+            let yearWhere = '';
+            let yearList = [];
+            try {
+                if (useRecent) {
+                    const maxR = this.db.exec(`SELECT MAX(YEAR) FROM "${tbl}"`);
+                    if (maxR.length > 0 && maxR[0].values[0][0]) {
+                        const mx = maxR[0].values[0][0];
+                        yearList = [mx - 1, mx];
+                        yearWhere = `WHERE YEAR IN (${yearList.join(',')})`;
+                    }
+                } else {
+                    yearList = targetYears;
+                    yearWhere = `WHERE YEAR IN (${yearList.join(',')})`;
+                }
+            } catch (e) {}
+
+            // ▶ 전체 요약 (항상 포함)
+            try {
+                const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), MIN(YEAR), MAX(YEAR) FROM "${tbl}"`);
+                if (r.length > 0 && r[0].values[0][0]) {
+                    const [s, c, q, mg, miy, mxy] = r[0].values[0];
+                    const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
+                    out.push(`▶ 전체 누적 (${miy}~${mxy}년)`);
+                    out.push(`  매출 ${this.fmt(s)}원 / ${c}건 / ${q}개 / 마진율 ${mr}%`);
+                }
+            } catch (e) {}
+
+            // ▶ 연도별 (전체 연도)
+            try {
+                const r = this.db.exec(`SELECT YEAR, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR IS NOT NULL GROUP BY YEAR ORDER BY YEAR`);
+                if (r.length > 0 && r[0].values.length > 0) {
+                    out.push(`▶ 연도별 매출`);
+                    r[0].values.forEach(([y, s, c, mg]) => {
+                        const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
+                        out.push(`  ${y}년: ${this.fmt(s)}원 (${c}건, 마진율 ${mr}%)`);
                     });
                 }
+            } catch (e) {}
+
+            // ▶ 월별 매출 (대상 연도)
+            if (yearWhere) {
+                try {
+                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${yearWhere} AND MONTH IS NOT NULL GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
+                    if (r.length > 0 && r[0].values.length > 0) {
+                        out.push(`▶ ${yearList.join(', ')}년 월별 매출`);
+                        r[0].values.forEach(([y, mo, s, c, mg]) => {
+                            const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
+                            out.push(`  ${y}년 ${mo}월: ${this.fmt(s)}원 (${c}건, 마진율 ${mr}%)`);
+                        });
+                    }
+                } catch (e) {}
             }
 
-            // 판매자별
-            const sR = this.db.exec(`SELECT 판매자, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${where} AND 판매자 IS NOT NULL GROUP BY 판매자 ORDER BY SUM(할인가) DESC`);
-            if (sR.length > 0 && sR[0].values.length > 0) {
-                ctx.push('');
-                ctx.push('[판매자별 실적]');
-                sR[0].values.forEach(([seller, s, c, mg]) => {
-                    const mr = (mg && s > 0) ? ` 마진율 ${(mg/s*100).toFixed(1)}%` : '';
-                    ctx.push(`  ${seller}: ${Math.round(s).toLocaleString()}원 (${c}건)${mr}`);
-                });
+            // ▶ 특정 월 핀포인트 (브랜드 × 연도 × 월 교차)
+            if (ent.months.length > 0 && yearList.length > 0) {
+                const yL = yearList.join(',');
+                const mL = ent.months.join(',');
+                try {
+                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
+                    if (r.length > 0 && r[0].values.length > 0) {
+                        out.push(`▶ 지정 월 상세 (${ent.months.join(',')}월)`);
+                        r[0].values.forEach(([y, mo, s, c, q, mg, avg]) => {
+                            const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
+                            out.push(`  ${y}년 ${mo}월: 매출 ${this.fmt(s)}원, ${c}건, ${q}개, 평균거래 ${this.fmt(avg)}원, 마진율 ${mr}%`);
+                        });
+                    }
+
+                    // 지정 월의 판매자별 상세
+                    const sR = this.db.exec(`SELECT YEAR, MONTH, 판매자, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) AND 판매자 IS NOT NULL GROUP BY YEAR, MONTH, 판매자 ORDER BY YEAR, MONTH, SUM(할인가) DESC`);
+                    if (sR.length > 0 && sR[0].values.length > 0) {
+                        out.push(`▶ 지정 월의 판매자별`);
+                        sR[0].values.forEach(([y, mo, s, sum, c, mg]) => {
+                            const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
+                            out.push(`  ${y}년 ${mo}월 [${s}]: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                        });
+                    }
+                } catch (e) {}
             }
 
-            // 구매용도별
-            const pR = this.db.exec(`SELECT 구매용도, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 구매용도 IS NOT NULL GROUP BY 구매용도 ORDER BY SUM(할인가) DESC`);
-            if (pR.length > 0 && pR[0].values.length > 0) {
-                ctx.push('');
-                ctx.push('[구매용도별]');
-                pR[0].values.forEach(([p, s, c]) => {
-                    ctx.push(`  ${p}: ${Math.round(s).toLocaleString()}원 (${c}건)`);
-                });
-            }
-
-            // 지역별 TOP5
-            const rR = this.db.exec(`SELECT 지역1, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 지역1 IS NOT NULL GROUP BY 지역1 ORDER BY SUM(할인가) DESC LIMIT 5`);
-            if (rR.length > 0 && rR[0].values.length > 0) {
-                ctx.push('');
-                ctx.push('[지역별 TOP5]');
-                rR[0].values.forEach(([reg, s, c]) => {
-                    ctx.push(`  ${reg}: ${Math.round(s).toLocaleString()}원 (${c}건)`);
-                });
-            }
-
-            // 전년 동기 비교 (연도+월 선택 시)
-            if (year && month) {
-                const prevYear = parseInt(year) - 1;
-                const prevR = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR=${prevYear} AND MONTH=${month}`);
-                if (prevR.length > 0 && prevR[0].values[0][0]) {
-                    const [ps, pc, pmg] = prevR[0].values[0];
-                    const pmr = (pmg && ps > 0) ? ` 마진율 ${(pmg/ps*100).toFixed(1)}%` : '';
-                    ctx.push('');
-                    ctx.push(`[전년 동기 비교] ${prevYear}년 ${month}월: ${Math.round(ps).toLocaleString()}원 (${pc}건)${pmr}`);
+            // ▶ 판매자별 실적 (대상 연도 또는 전체)
+            try {
+                const where = yearWhere || 'WHERE 1=1';
+                const r = this.db.exec(`SELECT 판매자, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${where} AND 판매자 IS NOT NULL GROUP BY 판매자 ORDER BY SUM(할인가) DESC LIMIT 10`);
+                if (r.length > 0 && r[0].values.length > 0) {
+                    out.push(`▶ 판매자별 실적${useRecent ? ' (최근 2년)' : ''}`);
+                    r[0].values.forEach(([s, sum, c, mg]) => {
+                        const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
+                        out.push(`  ${s}: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                    });
                 }
-            }
+            } catch (e) {}
 
-        } catch(e) {
-            ctx.push(`데이터 조회 오류: ${e.message}`);
+            // ▶ 지역별 TOP10
+            try {
+                const where = yearWhere || 'WHERE 1=1';
+                const r = this.db.exec(`SELECT 지역1, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 지역1 IS NOT NULL GROUP BY 지역1 ORDER BY SUM(할인가) DESC LIMIT 10`);
+                if (r.length > 0 && r[0].values.length > 0) {
+                    out.push(`▶ 지역별 TOP10${useRecent ? ' (최근 2년)' : ''}`);
+                    r[0].values.forEach(([rg, s, c]) => {
+                        out.push(`  ${rg}: ${this.fmt(s)}원 (${c}건)`);
+                    });
+                }
+            } catch (e) {}
+
+            // ▶ 구매용도별
+            try {
+                const where = yearWhere || 'WHERE 1=1';
+                const r = this.db.exec(`SELECT 구매용도, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 구매용도 IS NOT NULL GROUP BY 구매용도 ORDER BY SUM(할인가) DESC`);
+                if (r.length > 0 && r[0].values.length > 0) {
+                    out.push(`▶ 구매용도별${useRecent ? ' (최근 2년)' : ''}`);
+                    r[0].values.forEach(([p, s, c]) => {
+                        out.push(`  ${p}: ${this.fmt(s)}원 (${c}건)`);
+                    });
+                }
+            } catch (e) {}
+
+            // ▶ 특정 판매자/지역이 명시된 경우 추가 상세
+            if (ent.sellers.length > 0) {
+                const list = ent.sellers.map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+                try {
+                    const r = this.db.exec(`SELECT 판매자, YEAR, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE 판매자 IN (${list}) GROUP BY 판매자, YEAR ORDER BY 판매자, YEAR`);
+                    if (r.length > 0 && r[0].values.length > 0) {
+                        out.push(`▶ 지정 판매자 연도별`);
+                        r[0].values.forEach(([s, y, sum, c, mg]) => {
+                            const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
+                            out.push(`  [${s}] ${y}년: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                        });
+                    }
+                } catch (e) {}
+            }
+            if (ent.regions.length > 0) {
+                const list = ent.regions.map(s => `'${s.replace(/'/g, "''")}'`).join(',');
+                try {
+                    const r = this.db.exec(`SELECT 지역1, YEAR, SUM(할인가), COUNT(*) FROM "${tbl}" WHERE 지역1 IN (${list}) GROUP BY 지역1, YEAR ORDER BY 지역1, YEAR`);
+                    if (r.length > 0 && r[0].values.length > 0) {
+                        out.push(`▶ 지정 지역 연도별`);
+                        r[0].values.forEach(([rg, y, s, c]) => {
+                            out.push(`  [${rg}] ${y}년: ${this.fmt(s)}원 (${c}건)`);
+                        });
+                    }
+                } catch (e) {}
+            }
         }
 
-        return `당신은 침대/가구 판매 전문 매출 분석 AI 어시스턴트입니다.
-
-${ctx.join('\n')}
-
-[데이터 구조 안내]
-- MG(마진액): 건당 실제 마진 금액
-- 마진율 = SUM(MG) / SUM(할인가) × 100
-- ACE: 침대 브랜드, ESSA: 소파/가구 브랜드
-
-분석 시 준수사항:
-- 위 데이터에 기반한 구체적인 수치를 제시하세요
-- 반드시 한국어로 답변하세요
-- 데이터에 없는 내용은 추측임을 명시하세요
-- 간결하고 실용적으로 작성하세요`;
+        return out.join('\n');
     }
 
-    // Ollama API 호출
-    async callOllama(userMessage) {
-        // 현재 선택된 필터 읽기
-        const brand = document.getElementById('aiCtxBrand')?.value || 'ACE';
-        const year  = document.getElementById('aiCtxYear')?.value  || '';
-        const month = document.getElementById('aiCtxMonth')?.value || '';
-        const selectedModel = document.getElementById('aiCtxModel')?.value || this.model;
+    fmt(n) {
+        if (n === null || n === undefined || isNaN(n)) return '-';
+        return Math.round(n).toLocaleString();
+    }
 
-        // 브랜드 ALL이면 ACE+ESSA 각각 프롬프트 생성
-        let systemPrompt;
-        if (brand === 'ALL') {
-            const acePrompt = this.buildSystemPrompt('ACE', year, month);
-            const essaPrompt = this.buildSystemPrompt('ESSA', year, month);
-            systemPrompt = acePrompt + '\n\n' + essaPrompt.split('===')[1] || essaPrompt;
-        } else {
-            systemPrompt = this.buildSystemPrompt(brand, year, month);
+    // ─────────────────────────────────────────────────────────────
+    // 3. 시스템 프롬프트 생성
+    // ─────────────────────────────────────────────────────────────
+    buildSystemPrompt(userMessage) {
+        const ent = this.extractEntities(userMessage);
+        const ctx = this.buildContext(ent);
+        const today = new Date();
+        const todayStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
+
+        // 추출된 조건 요약 (모델 가이드용)
+        const detected = [];
+        if (ent.brands.length > 0) detected.push(`브랜드=${ent.brands.join(',')}`);
+        if (ent.years.length > 0) detected.push(`연도=${ent.years.join(',')}`);
+        if (ent.months.length > 0) detected.push(`월=${ent.months.join(',')}`);
+        if (ent.sellers.length > 0) detected.push(`판매자=${ent.sellers.join(',')}`);
+        if (ent.regions.length > 0) detected.push(`지역=${ent.regions.join(',')}`);
+        if (ent.hasYoY) detected.push('전년동기비교');
+        if (ent.hasMoM) detected.push('전월비교');
+        if (ent.hasTrend) detected.push('추이분석');
+        if (ent.hasMargin) detected.push('마진분석');
+        const detectedStr = detected.length > 0 ? detected.join(' / ') : '특정조건없음';
+
+        return `당신은 침대(ACE)/가구(ESSA) 판매 매출 분석 전문 AI 어시스턴트입니다. 오늘은 ${todayStr}입니다.
+
+[데이터 구조]
+- ACE: 침대 브랜드, ESSA: 소파/가구 브랜드
+- 주요 컬럼: YEAR, MONTH, 할인가(매출액), 수량, MG(건당 마진액), 판매자, 지역1, 구매용도
+- 마진율 = SUM(MG) / SUM(할인가) × 100
+
+[질문에서 감지한 조건]
+${detectedStr}
+
+[감지된 조건에 맞춰 미리 집계한 데이터]
+${ctx}
+
+[답변 규칙]
+- 위 [집계 데이터]에 명시된 수치만 사용하세요. 데이터에 없는 항목은 "데이터에 없습니다"라고 답하세요.
+- 비교 분석 시 반드시 증감액(원)과 증감률(%)을 함께 제시하세요.
+- 한국어로 간결하고 실용적으로 작성하되, 핵심 수치는 굵게 강조하지 말고 일반 텍스트로 명시하세요.
+- 추측·일반론은 피하고 데이터에 근거하세요.
+- 답변 마지막에 한 줄로 핵심 인사이트 또는 다음 분석 추천을 덧붙이세요.`;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 4. Ollama API 호출
+    // ─────────────────────────────────────────────────────────────
+    async callOllama(userMessage) {
+        const selectedModel = document.getElementById('aiCtxModel')?.value || this.model;
+        const systemPrompt = this.buildSystemPrompt(userMessage);
+
+        // 멀티턴: 직전 1~2턴만 포함 (컨텍스트 폭주 방지)
+        let history = '';
+        if (this.chatHistory.length > 0) {
+            const recent = this.chatHistory.slice(-4);
+            history = '\n\n[이전 대화 요약]\n' + recent.map(h => {
+                const tag = h.role === 'user' ? '사용자' : 'AI';
+                const c = h.content.length > 300 ? h.content.slice(0, 300) + '…' : h.content;
+                return `${tag}: ${c}`;
+            }).join('\n');
         }
 
-        const fullPrompt = `${systemPrompt}\n\n사용자 질문: ${userMessage}`;
+        const fullPrompt = `${systemPrompt}${history}\n\n사용자 질문: ${userMessage}`;
 
         const body = JSON.stringify({
             model: selectedModel,
@@ -270,6 +373,9 @@ ${ctx.join('\n')}
         return data.response || '응답을 받지 못했습니다.';
     }
 
+    // ─────────────────────────────────────────────────────────────
+    // 5. UI 렌더링
+    // ─────────────────────────────────────────────────────────────
     render() {
         const container = document.getElementById('aiTab');
         if (!container) return;
@@ -282,7 +388,8 @@ ${ctx.join('\n')}
             .ai-header-badge { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: 600; }
             .ai-context-bar { background: #f0f4ff; border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.9em; color: #555; display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
             .ai-context-bar select { padding: 6px 10px; border: 1px solid #c5cae9; border-radius: 6px; font-size: 0.9em; background: white; cursor: pointer; }
-            .ai-context-bar label { font-weight: 600; color: #667eea; }            .ai-quick-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; flex-shrink: 0; }
+            .ai-context-bar label { font-weight: 600; color: #667eea; }
+            .ai-quick-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; flex-shrink: 0; }
             .ai-quick-btn { padding: 8px 14px; background: #f0f4ff; border: 1px solid #c5cae9; border-radius: 20px; font-size: 0.85em; cursor: pointer; color: #667eea; font-weight: 600; transition: all 0.2s; white-space: nowrap; }
             .ai-quick-btn:hover { background: #667eea; color: white; border-color: #667eea; }
             .ai-messages { flex: 1; overflow-y: auto; padding: 8px 4px; display: flex; flex-direction: column; gap: 16px; }
@@ -295,6 +402,7 @@ ${ctx.join('\n')}
             .ai-msg.ai .ai-msg-bubble { background: #f8f9fa; color: #333; border-bottom-left-radius: 4px; }
             .ai-msg.user .ai-msg-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-bottom-right-radius: 4px; }
             .ai-msg-time { font-size: 0.75em; color: #aaa; margin-top: 4px; }
+            .ai-detected { font-size: 0.75em; color: #888; margin-top: 4px; padding: 4px 8px; background: #f5f5f5; border-radius: 6px; display: inline-block; }
             .ai-typing { display: flex; gap: 5px; align-items: center; padding: 12px 16px; background: #f8f9fa; border-radius: 16px; border-bottom-left-radius: 4px; }
             .ai-typing span { width: 8px; height: 8px; background: #667eea; border-radius: 50%; animation: typing 1.2s infinite; }
             .ai-typing span:nth-child(2) { animation-delay: 0.2s; }
@@ -303,13 +411,14 @@ ${ctx.join('\n')}
             .ai-input-area { display: flex; gap: 10px; margin-top: 16px; flex-shrink: 0; }
             .ai-input { flex: 1; padding: 14px 18px; border: 2px solid #e1e5e9; border-radius: 25px; font-size: 0.95em; outline: none; resize: none; font-family: inherit; transition: border-color 0.2s; max-height: 120px; overflow-y: auto; }
             .ai-input:focus { border-color: #667eea; }
-            .ai-send-btn { width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2em; transition: transform 0.2s; flex-shrink: 0; align-self: flex-end; }
+            .ai-send-btn { width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2em; transition: transform 0.2s; flex-shrink: 0; align-self: flex-end; color: white; }
             .ai-send-btn:hover { transform: scale(1.1); }
             .ai-send-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
             .ai-empty { text-align: center; padding: 60px 20px; color: #aaa; }
             .ai-empty-icon { font-size: 4em; margin-bottom: 16px; }
             .ai-empty-text { font-size: 1.1em; font-weight: 600; margin-bottom: 8px; color: #888; }
             .ai-empty-sub { font-size: 0.9em; }
+            .ai-tip { font-size: 0.8em; color: #888; margin-top: 4px; flex-basis: 100%; }
             @media (max-width: 768px) {
                 .ai-wrap { height: calc(100vh - 180px); padding: 16px; }
                 .ai-msg-bubble { max-width: 88%; font-size: 0.9em; }
@@ -323,83 +432,54 @@ ${ctx.join('\n')}
                 <div>
                     <div class="ai-header-title">AI 매출 분석 어시스턴트</div>
                 </div>
-                <div class="ai-header-badge">EXAONE 3.5</div>
+                <div class="ai-header-badge" id="aiModelBadge">EXAONE 3.5</div>
                 <button id="aiClearBtn" style="margin-left:auto;padding:6px 14px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;cursor:pointer;font-size:0.85em;color:#6c757d;">대화 초기화</button>
             </div>
             <div class="ai-context-bar">
-                <label>📊 분석 기준:</label>
-                <select id="aiCtxBrand"><option value="ACE">ACE</option><option value="ESSA">ESSA</option><option value="ALL">전체</option></select>
-                <select id="aiCtxYear"><option value="">전체 기간</option></select>
-                <select id="aiCtxMonth">
-                    <option value="">전체 월</option>
-                    <option value="1">1월</option><option value="2">2월</option><option value="3">3월</option>
-                    <option value="4">4월</option><option value="5">5월</option><option value="6">6월</option>
-                    <option value="7">7월</option><option value="8">8월</option><option value="9">9월</option>
-                    <option value="10">10월</option><option value="11">11월</option><option value="12">12월</option>
-                </select>
-                <label style="margin-left:8px;">🤖 모델:</label>
+                <label>🤖 모델:</label>
                 <select id="aiCtxModel">
-                    <option value="exaone3.5:7.8b">EXAONE 3.5 (한국어 최적)</option>
-                    <option value="deepseek-r1:8b">DeepSeek R1 (추론 특화)</option>
-                    <option value="gemma2:9b">Gemma2 9B (균형)</option>
-                    <option value="gemma2:2b">Gemma2 2B (빠름)</option>
+                    <option value="exaone3.5:7.8b">EXAONE 3.5 7.8B (한국어 최적) ⭐</option>
+                    <option value="gemma2:9b">Gemma2 9B (균형형)</option>
+                    <option value="hermes3:8b">Hermes 3 8B (대화 특화)</option>
+                    <option value="deepseek-r1:8b">DeepSeek R1 8B (추론 특화)</option>
+                    <option value="qwen2.5-coder:7b">Qwen2.5 Coder 7B (분석/수식)</option>
+                    <option value="qwen2.5:3b">Qwen2.5 3B (빠름)</option>
                     <option value="llama3.2:3b">Llama 3.2 3B (빠름)</option>
+                    <option value="gemma2:2b">Gemma2 2B (경량)</option>
                     <option value="phi3:mini">Phi3 Mini (경량)</option>
-                    <option value="qwen2.5-coder:7b">Qwen2.5 Coder 7B</option>
                 </select>
-                <span id="aiCtxStatus" style="color:#667eea;font-weight:600;font-size:0.85em;">✅ 데이터 연결됨</span>
+                <span id="aiCtxStatus" style="color:#667eea;font-weight:600;font-size:0.85em;margin-left:8px;">✅ 데이터 연결됨</span>
+                <div class="ai-tip">💡 질문에 브랜드(ACE/ESSA), 연도, 월, "전년 비교" 등을 자연어로 적어주세요. AI가 알아서 인식합니다.</div>
             </div>
             <div class="ai-quick-btns">
-                <button class="ai-quick-btn" data-q="이번 달 매출 현황을 분석해줘">📈 매출 현황</button>
-                <button class="ai-quick-btn" data-q="판매자별 실적을 비교 분석해줘">👤 판매자 분석</button>
-                <button class="ai-quick-btn" data-q="지역별 판매 특성을 분석해줘">📍 지역 분석</button>
-                <button class="ai-quick-btn" data-q="마진율이 낮은 원인을 분석하고 개선 방안을 제안해줘">💰 마진 분석</button>
-                <button class="ai-quick-btn" data-q="전년 동기 대비 매출 변화를 분석해줘">📅 전년 비교</button>
-                <button class="ai-quick-btn" data-q="매출 증대를 위한 전략을 제안해줘">💡 전략 제안</button>
+                <button class="ai-quick-btn" data-q="ACE 2025년 6월 매출을 전년 동기와 비교 분석해줘">📊 ACE 6월 전년비교</button>
+                <button class="ai-quick-btn" data-q="ESSA 올해 월별 매출 추이를 분석해줘">📈 ESSA 올해 추이</button>
+                <button class="ai-quick-btn" data-q="ACE와 ESSA의 최근 2년 마진율을 비교 분석해줘">💰 양 브랜드 마진비교</button>
+                <button class="ai-quick-btn" data-q="ACE 판매자별 실적 차이를 분석하고 상위 판매자의 강점을 추정해줘">👤 판매자 분석</button>
+                <button class="ai-quick-btn" data-q="ACE 지역별 매출 TOP5와 그 특성을 분석해줘">📍 지역 TOP5</button>
+                <button class="ai-quick-btn" data-q="ESSA 구매용도별 매출 비중과 시사점을 분석해줘">🛋️ 구매용도 분석</button>
+                <button class="ai-quick-btn" data-q="양 브랜드 모두 작년 대비 올해 성장률을 분석해줘">🚀 성장률 비교</button>
+                <button class="ai-quick-btn" data-q="매출 증대를 위한 구체적 전략을 제안해줘">💡 전략 제안</button>
             </div>
             <div class="ai-messages" id="aiMessages">
                 <div class="ai-empty">
                     <div class="ai-empty-icon">💬</div>
-                    <div class="ai-empty-text">무엇이든 물어보세요</div>
-                    <div class="ai-empty-sub">위 빠른 질문 버튼을 클릭하거나 직접 입력하세요</div>
+                    <div class="ai-empty-text">자연어로 자유롭게 물어보세요</div>
+                    <div class="ai-empty-sub">예) "ACE 2025년 6월 매출을 작년 같은 달과 비교해줘"<br>"ESSA 올해 월별 흐름과 마진율 추이"</div>
                 </div>
             </div>
             <div class="ai-input-area">
-                <textarea class="ai-input" id="aiInput" placeholder="매출 데이터에 대해 질문하세요..." rows="1"></textarea>
+                <textarea class="ai-input" id="aiInput" placeholder="자연어로 질문하세요. 예: ACE 2025년 6월 전년 동기 비교..." rows="1"></textarea>
                 <button class="ai-send-btn" id="aiSendBtn">➤</button>
             </div>
         </div>`;
 
         this.setupEventListeners();
-        this.loadContextFilters();
-    }
-
-    loadContextFilters() {
-        try {
-            const yearSel = document.getElementById('aiCtxYear');
-            if (!yearSel) return;
-            const tables = ['data_(ACE)', 'data_(ESSA)'];
-            const years = new Set();
-            tables.forEach(tbl => {
-                try {
-                    const r = this.db.exec(`SELECT DISTINCT YEAR FROM "${tbl}" WHERE YEAR IS NOT NULL ORDER BY YEAR DESC`);
-                    if (r.length > 0) r[0].values.forEach(([y]) => years.add(y));
-                } catch(e) {}
-            });
-            Array.from(years).sort((a,b) => b-a).forEach(y => {
-                yearSel.innerHTML += `<option value="${y}">${y}년</option>`;
-            });
-            // 현재 연도 기본 선택
-            const now = new Date().getFullYear();
-            if (years.has(now)) yearSel.value = now;
-        } catch(e) {}
     }
 
     setupEventListeners() {
-        // 전송 버튼
         document.getElementById('aiSendBtn').addEventListener('click', () => this.sendMessage());
 
-        // Enter 키 (Shift+Enter는 줄바꿈)
         document.getElementById('aiInput').addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -407,13 +487,11 @@ ${ctx.join('\n')}
             }
         });
 
-        // 자동 높이 조절
         document.getElementById('aiInput').addEventListener('input', (e) => {
             e.target.style.height = 'auto';
             e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
         });
 
-        // 빠른 질문 버튼
         document.querySelectorAll('.ai-quick-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const q = btn.getAttribute('data-q');
@@ -422,7 +500,6 @@ ${ctx.join('\n')}
             });
         });
 
-        // 대화 초기화
         document.getElementById('aiClearBtn').addEventListener('click', () => {
             this.chatHistory = [];
             document.getElementById('aiMessages').innerHTML = `
@@ -435,19 +512,19 @@ ${ctx.join('\n')}
 
         // 모델 변경 시 배지 업데이트
         document.getElementById('aiCtxModel')?.addEventListener('change', (e) => {
-            const badge = document.querySelector('.ai-header-badge');
-            if (badge) {
-                const labels = {
-                    'exaone3.5:7.8b': 'EXAONE 3.5',
-                    'deepseek-r1:8b': 'DeepSeek R1',
-                    'gemma2:9b': 'Gemma2 9B',
-                    'gemma2:2b': 'Gemma2 2B',
-                    'llama3.2:3b': 'Llama 3.2',
-                    'phi3:mini': 'Phi3 Mini',
-                    'qwen2.5-coder:7b': 'Qwen2.5 Coder'
-                };
-                badge.textContent = labels[e.target.value] || e.target.value;
-            }
+            const labels = {
+                'exaone3.5:7.8b': 'EXAONE 3.5',
+                'gemma2:9b': 'Gemma2 9B',
+                'hermes3:8b': 'Hermes 3',
+                'deepseek-r1:8b': 'DeepSeek R1',
+                'qwen2.5-coder:7b': 'Qwen2.5 Coder',
+                'qwen2.5:3b': 'Qwen2.5 3B',
+                'llama3.2:3b': 'Llama 3.2',
+                'gemma2:2b': 'Gemma2 2B',
+                'phi3:mini': 'Phi3 Mini'
+            };
+            const badge = document.getElementById('aiModelBadge');
+            if (badge) badge.textContent = labels[e.target.value] || e.target.value;
         });
     }
 
@@ -462,38 +539,48 @@ ${ctx.join('\n')}
         this.isLoading = true;
 
         const messagesEl = document.getElementById('aiMessages');
-
-        // 빈 상태 제거
         const empty = messagesEl.querySelector('.ai-empty');
         if (empty) empty.remove();
 
-        // 사용자 메시지 추가 (현재 분석 조건 표시)
-        const brand = document.getElementById('aiCtxBrand')?.value || 'ACE';
-        const year  = document.getElementById('aiCtxYear')?.value  || '';
-        const month = document.getElementById('aiCtxMonth')?.value || '';
-        const condLabel = `${brand} / ${year ? year+'년' : '전체'} / ${month ? month+'월' : '전체'}`;
-        this.appendMessage('user', msg, condLabel);
+        // 자연어에서 추출된 조건 미리보기 (사용자 확인용)
+        const ent = this.extractEntities(msg);
+        const detected = [];
+        if (ent.brands.length === 2) detected.push('양 브랜드');
+        else if (ent.brands.length > 0) detected.push(ent.brands.join(','));
+        if (ent.years.length > 0) detected.push(ent.years.join(',') + '년');
+        if (ent.months.length > 0) detected.push(ent.months.join(',') + '월');
+        if (ent.hasYoY) detected.push('전년비교');
+        if (ent.hasMoM) detected.push('전월비교');
+        const detectedLabel = detected.length > 0 ? `🔍 ${detected.join(' / ')}` : '';
+
+        this.appendMessage('user', msg, detectedLabel);
 
         // 타이핑 인디케이터
         const typingId = 'typing-' + Date.now();
-        messagesEl.innerHTML += `
-            <div class="ai-msg ai" id="${typingId}">
-                <div class="ai-msg-avatar">🤖</div>
-                <div class="ai-typing"><span></span><span></span><span></span></div>
-            </div>`;
+        const typingDiv = document.createElement('div');
+        typingDiv.className = 'ai-msg ai';
+        typingDiv.id = typingId;
+        typingDiv.innerHTML = `
+            <div class="ai-msg-avatar">🤖</div>
+            <div class="ai-typing"><span></span><span></span><span></span></div>`;
+        messagesEl.appendChild(typingDiv);
         messagesEl.scrollTop = messagesEl.scrollHeight;
 
         document.getElementById('aiSendBtn').disabled = true;
 
         try {
-            // 현재 컨텍스트 필터 읽기 (callOllama 내부에서 직접 읽음)
             const reply = await this.callOllama(msg);
-
-            // 타이핑 제거 후 응답 추가
             document.getElementById(typingId)?.remove();
             this.appendMessage('ai', reply);
 
-        } catch(e) {
+            // 멀티턴 대화 이력 누적
+            this.chatHistory.push({ role: 'user', content: msg });
+            this.chatHistory.push({ role: 'ai', content: reply });
+            // 최대 8턴(16개 메시지)만 유지
+            if (this.chatHistory.length > 16) {
+                this.chatHistory = this.chatHistory.slice(-16);
+            }
+        } catch (e) {
             document.getElementById(typingId)?.remove();
             this.appendMessage('ai', `❌ 오류가 발생했습니다: ${e.message}\n\n잠시 후 다시 시도해주세요.`);
         }
@@ -503,13 +590,13 @@ ${ctx.join('\n')}
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    appendMessage(role, content, condLabel = '') {
+    appendMessage(role, content, detectedLabel = '') {
         const messagesEl = document.getElementById('aiMessages');
-        const now = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+        const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         const isUser = role === 'user';
         const avatar = isUser ? '👤' : '🤖';
-        const badge = (isUser && condLabel)
-            ? `<div style="font-size:0.75em;color:#a78bfa;margin-bottom:4px;text-align:right;">📊 ${condLabel}</div>`
+        const detectedHtml = (isUser && detectedLabel)
+            ? `<div class="ai-detected" style="text-align:right;float:right;">${this.escapeHtml(detectedLabel)}</div><div style="clear:both;"></div>`
             : '';
 
         const div = document.createElement('div');
@@ -517,16 +604,16 @@ ${ctx.join('\n')}
         div.innerHTML = `
             <div class="ai-msg-avatar">${avatar}</div>
             <div style="max-width:75%">
-                ${badge}
+                ${detectedHtml}
                 <div class="ai-msg-bubble">${this.escapeHtml(content)}</div>
-                <div class="ai-msg-time" style="text-align:${isUser?'right':'left'}">${now}</div>
+                <div class="ai-msg-time" style="text-align:${isUser ? 'right' : 'left'}">${now}</div>
             </div>`;
         messagesEl.appendChild(div);
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     escapeHtml(text) {
-        return text
+        return String(text)
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
