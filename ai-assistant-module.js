@@ -115,26 +115,40 @@ class AIAssistantModule {
 
     // ─────────────────────────────────────────────────────────────
     // 2-A. 단일 (브랜드, 연도, 월) 집계 - 비교 사전 계산용
+    //   ※ 건수는 실제 DB 컬럼(SUM(건수))이며 행 개수(COUNT(*))와 다름
+    //     데이터 존재 여부는 COUNT(*)로 판단해 SUM이 NULL인 케이스와 구분
     // ─────────────────────────────────────────────────────────────
     queryMonth(tbl, year, month) {
         try {
-            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR=${year} AND MONTH=${month}`);
-            if (r.length > 0 && r[0].values[0][0] !== null) {
-                const [sales, cnt, qty, mg, avg] = r[0].values[0];
-                return { sales: sales || 0, cnt: cnt || 0, qty: qty || 0, mg: mg || 0, avg: avg || 0 };
+            const r = this.db.exec(`SELECT COUNT(*) as rows, SUM(할인가) as sales, SUM(건수) as orders, SUM(수량) as qty, SUM("MG") as mg FROM "${tbl}" WHERE YEAR=${year} AND MONTH=${month}`);
+            if (r.length > 0) {
+                const [rows, sales, orders, qty, mg] = r[0].values[0];
+                if (!rows || rows === 0) return null; // 행 자체가 없음
+                const cnt = orders || 0;
+                const salesNum = sales || 0;
+                const avg = cnt > 0 ? salesNum / cnt : 0;
+                return { sales: salesNum, cnt: cnt, qty: qty || 0, mg: mg || 0, avg: avg, rows: rows };
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('[AI] queryMonth error', tbl, year, month, e);
+        }
         return null;
     }
 
     queryYear(tbl, year) {
         try {
-            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR=${year}`);
-            if (r.length > 0 && r[0].values[0][0] !== null) {
-                const [sales, cnt, qty, mg, avg] = r[0].values[0];
-                return { sales: sales || 0, cnt: cnt || 0, qty: qty || 0, mg: mg || 0, avg: avg || 0 };
+            const r = this.db.exec(`SELECT COUNT(*) as rows, SUM(할인가) as sales, SUM(건수) as orders, SUM(수량) as qty, SUM("MG") as mg FROM "${tbl}" WHERE YEAR=${year}`);
+            if (r.length > 0) {
+                const [rows, sales, orders, qty, mg] = r[0].values[0];
+                if (!rows || rows === 0) return null;
+                const cnt = orders || 0;
+                const salesNum = sales || 0;
+                const avg = cnt > 0 ? salesNum / cnt : 0;
+                return { sales: salesNum, cnt: cnt, qty: qty || 0, mg: mg || 0, avg: avg, rows: rows };
             }
-        } catch (e) {}
+        } catch (e) {
+            console.warn('[AI] queryYear error', tbl, year, e);
+        }
         return null;
     }
 
@@ -203,12 +217,12 @@ class AIAssistantModule {
                         }
                         if (!cur) {
                             lines.push(`  ⚠ 당기(${ty}-${tm}) 데이터 없음`);
-                            if (prev) lines.push(`  전년 매출: ${this.fmt(prev.sales)}원 / ${prev.cnt}건`);
+                            if (prev) lines.push(`  전년 매출: ${this.fmt(prev.sales)}원 / ${this.fmt(prev.cnt)}건`);
                             hasAnyComparison = true;
                             continue;
                         }
                         if (!prev) {
-                            lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개`);
+                            lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${this.fmt(cur.cnt)}건 / 수량 ${this.fmt(cur.qty)}개`);
                             lines.push(`  ⚠ 전년(${cmpY}-${cmpM}) 데이터 없음 → 비교 불가`);
                             hasAnyComparison = true;
                             continue;
@@ -226,11 +240,11 @@ class AIAssistantModule {
                         const dAvg = curAvg - prevAvg;
                         const pAvg = prevAvg > 0 ? (dAvg / prevAvg * 100) : null;
 
-                        lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개 / 마진율 ${curMr.toFixed(1)}% / 평균거래 ${this.fmt(curAvg)}원`);
-                        lines.push(`  전기(${cmpY}-${cmpM}): 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건 / 수량 ${prev.qty}개 / 마진율 ${prevMr.toFixed(1)}% / 평균거래 ${this.fmt(prevAvg)}원`);
+                        lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${this.fmt(cur.cnt)}건 / 수량 ${this.fmt(cur.qty)}개 / 마진율 ${curMr.toFixed(1)}% / 평균거래 ${this.fmt(curAvg)}원`);
+                        lines.push(`  전기(${cmpY}-${cmpM}): 매출 ${this.fmt(prev.sales)}원 / ${this.fmt(prev.cnt)}건 / 수량 ${this.fmt(prev.qty)}개 / 마진율 ${prevMr.toFixed(1)}% / 평균거래 ${this.fmt(prevAvg)}원`);
                         lines.push(`  ▶ 매출 증감: ${this.signedFmt(dSales)}원 ${pSales !== null ? '(' + this.signedPct(pSales) + ')' : ''}`);
-                        lines.push(`  ▶ 건수 증감: ${this.signedNum(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
-                        lines.push(`  ▶ 수량 증감: ${this.signedNum(dQty)}개`);
+                        lines.push(`  ▶ 건수 증감: ${this.signedFmt(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
+                        lines.push(`  ▶ 수량 증감: ${this.signedFmt(dQty)}개`);
                         lines.push(`  ▶ 마진율 변화: ${this.signedNum((curMr - prevMr).toFixed(1))}%p`);
                         lines.push(`  ▶ 평균거래액 증감: ${this.signedFmt(dAvg)}원 ${pAvg !== null ? '(' + this.signedPct(pAvg) + ')' : ''}`);
                         hasAnyComparison = true;
@@ -254,8 +268,8 @@ class AIAssistantModule {
                     }
                     if (!cur || !prev) {
                         lines.push(`  ⚠ 한쪽 연도 데이터 없음 → 비교 불가`);
-                        if (cur) lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건`);
-                        if (prev) lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건`);
+                        if (cur) lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${this.fmt(cur.cnt)}건`);
+                        if (prev) lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${this.fmt(prev.cnt)}건`);
                         hasAnyComparison = true;
                         continue;
                     }
@@ -267,10 +281,10 @@ class AIAssistantModule {
                     const curMr = cur.sales > 0 ? (cur.mg / cur.sales * 100) : 0;
                     const prevMr = prev.sales > 0 ? (prev.mg / prev.sales * 100) : 0;
 
-                    lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개 / 마진율 ${curMr.toFixed(1)}%`);
-                    lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건 / 수량 ${prev.qty}개 / 마진율 ${prevMr.toFixed(1)}%`);
+                    lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${this.fmt(cur.cnt)}건 / 수량 ${this.fmt(cur.qty)}개 / 마진율 ${curMr.toFixed(1)}%`);
+                    lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${this.fmt(prev.cnt)}건 / 수량 ${this.fmt(prev.qty)}개 / 마진율 ${prevMr.toFixed(1)}%`);
                     lines.push(`  ▶ 매출 증감: ${this.signedFmt(dSales)}원 ${pSales !== null ? '(' + this.signedPct(pSales) + ')' : ''}`);
-                    lines.push(`  ▶ 건수 증감: ${this.signedNum(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
+                    lines.push(`  ▶ 건수 증감: ${this.signedFmt(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
                     lines.push(`  ▶ 마진율 변화: ${this.signedNum((curMr - prevMr).toFixed(1))}%p`);
                     hasAnyComparison = true;
                 }
@@ -331,23 +345,23 @@ class AIAssistantModule {
 
             // ▶ 전체 요약 (항상 포함)
             try {
-                const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), MIN(YEAR), MAX(YEAR) FROM "${tbl}"`);
+                const r = this.db.exec(`SELECT SUM(할인가), SUM(건수), SUM(수량), SUM("MG"), MIN(YEAR), MAX(YEAR) FROM "${tbl}"`);
                 if (r.length > 0 && r[0].values[0][0]) {
                     const [s, c, q, mg, miy, mxy] = r[0].values[0];
                     const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
                     out.push(`▶ 전체 누적 (${miy}~${mxy}년)`);
-                    out.push(`  매출 ${this.fmt(s)}원 / ${c}건 / ${q}개 / 마진율 ${mr}%`);
+                    out.push(`  매출 ${this.fmt(s)}원 / ${this.fmt(c)}건 / ${this.fmt(q)}개 / 마진율 ${mr}%`);
                 }
             } catch (e) {}
 
             // ▶ 연도별 (전체 연도)
             try {
-                const r = this.db.exec(`SELECT YEAR, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR IS NOT NULL GROUP BY YEAR ORDER BY YEAR`);
+                const r = this.db.exec(`SELECT YEAR, SUM(할인가), SUM(건수), SUM("MG") FROM "${tbl}" WHERE YEAR IS NOT NULL GROUP BY YEAR ORDER BY YEAR`);
                 if (r.length > 0 && r[0].values.length > 0) {
                     out.push(`▶ 연도별 매출`);
                     r[0].values.forEach(([y, s, c, mg]) => {
                         const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
-                        out.push(`  ${y}년: ${this.fmt(s)}원 (${c}건, 마진율 ${mr}%)`);
+                        out.push(`  ${y}년: ${this.fmt(s)}원 (${this.fmt(c)}건, 마진율 ${mr}%)`);
                     });
                 }
             } catch (e) {}
@@ -355,12 +369,12 @@ class AIAssistantModule {
             // ▶ 월별 매출 (대상 연도)
             if (yearWhere) {
                 try {
-                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${yearWhere} AND MONTH IS NOT NULL GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
+                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), SUM(건수), SUM("MG") FROM "${tbl}" ${yearWhere} AND MONTH IS NOT NULL GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
                     if (r.length > 0 && r[0].values.length > 0) {
                         out.push(`▶ ${yearList.join(', ')}년 월별 매출`);
                         r[0].values.forEach(([y, mo, s, c, mg]) => {
                             const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
-                            out.push(`  ${y}년 ${mo}월: ${this.fmt(s)}원 (${c}건, 마진율 ${mr}%)`);
+                            out.push(`  ${y}년 ${mo}월: ${this.fmt(s)}원 (${this.fmt(c)}건, 마진율 ${mr}%)`);
                         });
                     }
                 } catch (e) {}
@@ -371,22 +385,23 @@ class AIAssistantModule {
                 const yL = yearList.join(',');
                 const mL = ent.months.join(',');
                 try {
-                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
+                    const r = this.db.exec(`SELECT YEAR, MONTH, SUM(할인가), SUM(건수), SUM(수량), SUM("MG") FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) GROUP BY YEAR, MONTH ORDER BY YEAR, MONTH`);
                     if (r.length > 0 && r[0].values.length > 0) {
                         out.push(`▶ 지정 월 상세 (${ent.months.join(',')}월)`);
-                        r[0].values.forEach(([y, mo, s, c, q, mg, avg]) => {
+                        r[0].values.forEach(([y, mo, s, c, q, mg]) => {
                             const mr = (mg && s > 0) ? (mg / s * 100).toFixed(1) : 'N/A';
-                            out.push(`  ${y}년 ${mo}월: 매출 ${this.fmt(s)}원, ${c}건, ${q}개, 평균거래 ${this.fmt(avg)}원, 마진율 ${mr}%`);
+                            const avg = c > 0 ? s / c : 0;
+                            out.push(`  ${y}년 ${mo}월: 매출 ${this.fmt(s)}원, ${this.fmt(c)}건, ${this.fmt(q)}개, 평균거래 ${this.fmt(avg)}원, 마진율 ${mr}%`);
                         });
                     }
 
                     // 지정 월의 판매자별 상세
-                    const sR = this.db.exec(`SELECT YEAR, MONTH, 판매자, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) AND 판매자 IS NOT NULL GROUP BY YEAR, MONTH, 판매자 ORDER BY YEAR, MONTH, SUM(할인가) DESC`);
+                    const sR = this.db.exec(`SELECT YEAR, MONTH, 판매자, SUM(할인가), SUM(건수), SUM("MG") FROM "${tbl}" WHERE YEAR IN (${yL}) AND MONTH IN (${mL}) AND 판매자 IS NOT NULL GROUP BY YEAR, MONTH, 판매자 ORDER BY YEAR, MONTH, SUM(할인가) DESC`);
                     if (sR.length > 0 && sR[0].values.length > 0) {
                         out.push(`▶ 지정 월의 판매자별`);
                         sR[0].values.forEach(([y, mo, s, sum, c, mg]) => {
                             const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
-                            out.push(`  ${y}년 ${mo}월 [${s}]: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                            out.push(`  ${y}년 ${mo}월 [${s}]: ${this.fmt(sum)}원 (${this.fmt(c)}건, 마진율 ${mr}%)`);
                         });
                     }
                 } catch (e) {}
@@ -395,12 +410,12 @@ class AIAssistantModule {
             // ▶ 판매자별 실적 (대상 연도 또는 전체)
             try {
                 const where = yearWhere || 'WHERE 1=1';
-                const r = this.db.exec(`SELECT 판매자, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" ${where} AND 판매자 IS NOT NULL GROUP BY 판매자 ORDER BY SUM(할인가) DESC LIMIT 10`);
+                const r = this.db.exec(`SELECT 판매자, SUM(할인가), SUM(건수), SUM("MG") FROM "${tbl}" ${where} AND 판매자 IS NOT NULL GROUP BY 판매자 ORDER BY SUM(할인가) DESC LIMIT 10`);
                 if (r.length > 0 && r[0].values.length > 0) {
                     out.push(`▶ 판매자별 실적${useRecent ? ' (최근 2년)' : ''}`);
                     r[0].values.forEach(([s, sum, c, mg]) => {
                         const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
-                        out.push(`  ${s}: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                        out.push(`  ${s}: ${this.fmt(sum)}원 (${this.fmt(c)}건, 마진율 ${mr}%)`);
                     });
                 }
             } catch (e) {}
@@ -408,11 +423,11 @@ class AIAssistantModule {
             // ▶ 지역별 TOP10
             try {
                 const where = yearWhere || 'WHERE 1=1';
-                const r = this.db.exec(`SELECT 지역1, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 지역1 IS NOT NULL GROUP BY 지역1 ORDER BY SUM(할인가) DESC LIMIT 10`);
+                const r = this.db.exec(`SELECT 지역1, SUM(할인가), SUM(건수) FROM "${tbl}" ${where} AND 지역1 IS NOT NULL GROUP BY 지역1 ORDER BY SUM(할인가) DESC LIMIT 10`);
                 if (r.length > 0 && r[0].values.length > 0) {
                     out.push(`▶ 지역별 TOP10${useRecent ? ' (최근 2년)' : ''}`);
                     r[0].values.forEach(([rg, s, c]) => {
-                        out.push(`  ${rg}: ${this.fmt(s)}원 (${c}건)`);
+                        out.push(`  ${rg}: ${this.fmt(s)}원 (${this.fmt(c)}건)`);
                     });
                 }
             } catch (e) {}
@@ -420,11 +435,11 @@ class AIAssistantModule {
             // ▶ 구매용도별
             try {
                 const where = yearWhere || 'WHERE 1=1';
-                const r = this.db.exec(`SELECT 구매용도, SUM(할인가), COUNT(*) FROM "${tbl}" ${where} AND 구매용도 IS NOT NULL GROUP BY 구매용도 ORDER BY SUM(할인가) DESC`);
+                const r = this.db.exec(`SELECT 구매용도, SUM(할인가), SUM(건수) FROM "${tbl}" ${where} AND 구매용도 IS NOT NULL GROUP BY 구매용도 ORDER BY SUM(할인가) DESC`);
                 if (r.length > 0 && r[0].values.length > 0) {
                     out.push(`▶ 구매용도별${useRecent ? ' (최근 2년)' : ''}`);
                     r[0].values.forEach(([p, s, c]) => {
-                        out.push(`  ${p}: ${this.fmt(s)}원 (${c}건)`);
+                        out.push(`  ${p}: ${this.fmt(s)}원 (${this.fmt(c)}건)`);
                     });
                 }
             } catch (e) {}
@@ -433,12 +448,12 @@ class AIAssistantModule {
             if (ent.sellers.length > 0) {
                 const list = ent.sellers.map(s => `'${s.replace(/'/g, "''")}'`).join(',');
                 try {
-                    const r = this.db.exec(`SELECT 판매자, YEAR, SUM(할인가), COUNT(*), SUM("MG") FROM "${tbl}" WHERE 판매자 IN (${list}) GROUP BY 판매자, YEAR ORDER BY 판매자, YEAR`);
+                    const r = this.db.exec(`SELECT 판매자, YEAR, SUM(할인가), SUM(건수), SUM("MG") FROM "${tbl}" WHERE 판매자 IN (${list}) GROUP BY 판매자, YEAR ORDER BY 판매자, YEAR`);
                     if (r.length > 0 && r[0].values.length > 0) {
                         out.push(`▶ 지정 판매자 연도별`);
                         r[0].values.forEach(([s, y, sum, c, mg]) => {
                             const mr = (mg && sum > 0) ? (mg / sum * 100).toFixed(1) : 'N/A';
-                            out.push(`  [${s}] ${y}년: ${this.fmt(sum)}원 (${c}건, 마진율 ${mr}%)`);
+                            out.push(`  [${s}] ${y}년: ${this.fmt(sum)}원 (${this.fmt(c)}건, 마진율 ${mr}%)`);
                         });
                     }
                 } catch (e) {}
@@ -446,11 +461,11 @@ class AIAssistantModule {
             if (ent.regions.length > 0) {
                 const list = ent.regions.map(s => `'${s.replace(/'/g, "''")}'`).join(',');
                 try {
-                    const r = this.db.exec(`SELECT 지역1, YEAR, SUM(할인가), COUNT(*) FROM "${tbl}" WHERE 지역1 IN (${list}) GROUP BY 지역1, YEAR ORDER BY 지역1, YEAR`);
+                    const r = this.db.exec(`SELECT 지역1, YEAR, SUM(할인가), SUM(건수) FROM "${tbl}" WHERE 지역1 IN (${list}) GROUP BY 지역1, YEAR ORDER BY 지역1, YEAR`);
                     if (r.length > 0 && r[0].values.length > 0) {
                         out.push(`▶ 지정 지역 연도별`);
                         r[0].values.forEach(([rg, y, s, c]) => {
-                            out.push(`  [${rg}] ${y}년: ${this.fmt(s)}원 (${c}건)`);
+                            out.push(`  [${rg}] ${y}년: ${this.fmt(s)}원 (${this.fmt(c)}건)`);
                         });
                     }
                 } catch (e) {}
@@ -496,8 +511,10 @@ class AIAssistantModule {
 
 [데이터 구조]
 - ACE: 침대 브랜드, ESSA: 소파/가구 브랜드
-- 주요 컬럼: YEAR, MONTH, 할인가(매출액), 수량, MG(건당 마진액), 판매자, 지역1, 구매용도
+- 주요 컬럼: YEAR, MONTH, 할인가(매출액), 건수(거래건수), 수량, MG(건당 마진액), 판매자, 지역1, 구매용도
+- ⚠ "건수"는 별도 컬럼이며 SUM(건수)로 집계됩니다 (행 개수가 아님)
 - 마진율 = SUM(MG) / SUM(할인가) × 100
+- 평균거래액 = SUM(할인가) / SUM(건수)
 
 [질문에서 감지한 조건]
 ${detectedStr}
