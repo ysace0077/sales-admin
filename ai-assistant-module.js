@@ -114,7 +114,187 @@ class AIAssistantModule {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 2. 엔티티 기반 동적 컨텍스트 빌드
+    // 2-A. 단일 (브랜드, 연도, 월) 집계 - 비교 사전 계산용
+    // ─────────────────────────────────────────────────────────────
+    queryMonth(tbl, year, month) {
+        try {
+            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR=${year} AND MONTH=${month}`);
+            if (r.length > 0 && r[0].values[0][0] !== null) {
+                const [sales, cnt, qty, mg, avg] = r[0].values[0];
+                return { sales: sales || 0, cnt: cnt || 0, qty: qty || 0, mg: mg || 0, avg: avg || 0 };
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    queryYear(tbl, year) {
+        try {
+            const r = this.db.exec(`SELECT SUM(할인가), COUNT(*), SUM(수량), SUM("MG"), AVG(할인가) FROM "${tbl}" WHERE YEAR=${year}`);
+            if (r.length > 0 && r[0].values[0][0] !== null) {
+                const [sales, cnt, qty, mg, avg] = r[0].values[0];
+                return { sales: sales || 0, cnt: cnt || 0, qty: qty || 0, mg: mg || 0, avg: avg || 0 };
+            }
+        } catch (e) {}
+        return null;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 2-B. 핵심 비교 블록 (YoY/MoM 사전 계산)
+    //   - 모델이 산수를 하지 않도록 모든 증감을 JS에서 계산
+    // ─────────────────────────────────────────────────────────────
+    buildComparisonBlock(ent) {
+        if (!ent.hasYoY && !ent.hasMoM) return '';
+
+        const lines = ['========== 🔥 핵심 비교 결과 (사전 계산됨 — 이 수치를 그대로 사용) =========='];
+        const brandList = ent.brands.length > 0 ? ent.brands : ['ACE', 'ESSA'];
+
+        // 비교 기준 시점 결정
+        // 연도+월 모두 명시된 경우: 해당 시점 기준
+        // 연도만 명시: 연도 단위 비교
+        // 월만 명시: 최신 연도 기준 + 그 월
+        // 둘 다 미지정: 최신 데이터 기준 (현재 월)
+        let baseYears = [...ent.years];
+        let baseMonths = [...ent.months];
+
+        if (baseYears.length === 0) {
+            // 최신 연도 자동 선택
+            const candidates = brandList.map(b => {
+                const tbl = b === 'ESSA' ? 'data_(ESSA)' : 'data_(ACE)';
+                try {
+                    const r = this.db.exec(`SELECT MAX(YEAR) FROM "${tbl}"`);
+                    return (r.length > 0 && r[0].values[0][0]) ? r[0].values[0][0] : null;
+                } catch (e) { return null; }
+            }).filter(Boolean);
+            if (candidates.length > 0) baseYears = [Math.max(...candidates)];
+        }
+        if (baseMonths.length === 0 && ent.hasYoY) {
+            // 연도 비교만 하는 경우 (월 전체)
+            // baseMonths 빈 채로 두고 연도 단위 비교
+        }
+
+        let hasAnyComparison = false;
+
+        for (const brand of brandList) {
+            const tbl = brand === 'ESSA' ? 'data_(ESSA)' : 'data_(ACE)';
+            const label = brand === 'ESSA' ? 'ESSA(소파/가구)' : 'ACE(침대)';
+
+            // ─ 월 단위 비교 (특정 연도 + 특정 월)
+            if (baseYears.length > 0 && baseMonths.length > 0) {
+                for (const ty of baseYears) {
+                    for (const tm of baseMonths) {
+                        // 비교 대상 시점 결정
+                        let cmpY = ty, cmpM = tm, cmpTag = '';
+                        if (ent.hasYoY) { cmpY = ty - 1; cmpTag = '전년 동월'; }
+                        else if (ent.hasMoM) {
+                            if (tm === 1) { cmpY = ty - 1; cmpM = 12; }
+                            else { cmpM = tm - 1; }
+                            cmpTag = '전월';
+                        }
+
+                        const cur = this.queryMonth(tbl, ty, tm);
+                        const prev = this.queryMonth(tbl, cmpY, cmpM);
+
+                        lines.push(`\n[${label}] ${ty}년 ${tm}월 vs ${cmpY}년 ${cmpM}월 (${cmpTag} 비교)`);
+
+                        if (!cur && !prev) {
+                            lines.push(`  ⚠ 양쪽 시점 모두 데이터 없음`);
+                            hasAnyComparison = true;
+                            continue;
+                        }
+                        if (!cur) {
+                            lines.push(`  ⚠ 당기(${ty}-${tm}) 데이터 없음`);
+                            if (prev) lines.push(`  전년 매출: ${this.fmt(prev.sales)}원 / ${prev.cnt}건`);
+                            hasAnyComparison = true;
+                            continue;
+                        }
+                        if (!prev) {
+                            lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개`);
+                            lines.push(`  ⚠ 전년(${cmpY}-${cmpM}) 데이터 없음 → 비교 불가`);
+                            hasAnyComparison = true;
+                            continue;
+                        }
+
+                        const dSales = cur.sales - prev.sales;
+                        const pSales = prev.sales > 0 ? (dSales / prev.sales * 100) : null;
+                        const dCnt = cur.cnt - prev.cnt;
+                        const pCnt = prev.cnt > 0 ? (dCnt / prev.cnt * 100) : null;
+                        const dQty = cur.qty - prev.qty;
+                        const curMr = cur.sales > 0 ? (cur.mg / cur.sales * 100) : 0;
+                        const prevMr = prev.sales > 0 ? (prev.mg / prev.sales * 100) : 0;
+                        const curAvg = cur.cnt > 0 ? (cur.sales / cur.cnt) : 0;
+                        const prevAvg = prev.cnt > 0 ? (prev.sales / prev.cnt) : 0;
+                        const dAvg = curAvg - prevAvg;
+                        const pAvg = prevAvg > 0 ? (dAvg / prevAvg * 100) : null;
+
+                        lines.push(`  당기(${ty}-${tm}): 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개 / 마진율 ${curMr.toFixed(1)}% / 평균거래 ${this.fmt(curAvg)}원`);
+                        lines.push(`  전기(${cmpY}-${cmpM}): 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건 / 수량 ${prev.qty}개 / 마진율 ${prevMr.toFixed(1)}% / 평균거래 ${this.fmt(prevAvg)}원`);
+                        lines.push(`  ▶ 매출 증감: ${this.signedFmt(dSales)}원 ${pSales !== null ? '(' + this.signedPct(pSales) + ')' : ''}`);
+                        lines.push(`  ▶ 건수 증감: ${this.signedNum(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
+                        lines.push(`  ▶ 수량 증감: ${this.signedNum(dQty)}개`);
+                        lines.push(`  ▶ 마진율 변화: ${this.signedNum((curMr - prevMr).toFixed(1))}%p`);
+                        lines.push(`  ▶ 평균거래액 증감: ${this.signedFmt(dAvg)}원 ${pAvg !== null ? '(' + this.signedPct(pAvg) + ')' : ''}`);
+                        hasAnyComparison = true;
+                    }
+                }
+            }
+
+            // ─ 연도 단위 비교 (월 미지정, YoY)
+            if (baseYears.length > 0 && baseMonths.length === 0 && ent.hasYoY) {
+                for (const ty of baseYears) {
+                    const cmpY = ty - 1;
+                    const cur = this.queryYear(tbl, ty);
+                    const prev = this.queryYear(tbl, cmpY);
+
+                    lines.push(`\n[${label}] ${ty}년 vs ${cmpY}년 (연도 전체 비교)`);
+
+                    if (!cur && !prev) {
+                        lines.push(`  ⚠ 양쪽 연도 모두 데이터 없음`);
+                        hasAnyComparison = true;
+                        continue;
+                    }
+                    if (!cur || !prev) {
+                        lines.push(`  ⚠ 한쪽 연도 데이터 없음 → 비교 불가`);
+                        if (cur) lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건`);
+                        if (prev) lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건`);
+                        hasAnyComparison = true;
+                        continue;
+                    }
+
+                    const dSales = cur.sales - prev.sales;
+                    const pSales = prev.sales > 0 ? (dSales / prev.sales * 100) : null;
+                    const dCnt = cur.cnt - prev.cnt;
+                    const pCnt = prev.cnt > 0 ? (dCnt / prev.cnt * 100) : null;
+                    const curMr = cur.sales > 0 ? (cur.mg / cur.sales * 100) : 0;
+                    const prevMr = prev.sales > 0 ? (prev.mg / prev.sales * 100) : 0;
+
+                    lines.push(`  ${ty}년: 매출 ${this.fmt(cur.sales)}원 / ${cur.cnt}건 / 수량 ${cur.qty}개 / 마진율 ${curMr.toFixed(1)}%`);
+                    lines.push(`  ${cmpY}년: 매출 ${this.fmt(prev.sales)}원 / ${prev.cnt}건 / 수량 ${prev.qty}개 / 마진율 ${prevMr.toFixed(1)}%`);
+                    lines.push(`  ▶ 매출 증감: ${this.signedFmt(dSales)}원 ${pSales !== null ? '(' + this.signedPct(pSales) + ')' : ''}`);
+                    lines.push(`  ▶ 건수 증감: ${this.signedNum(dCnt)}건 ${pCnt !== null ? '(' + this.signedPct(pCnt) + ')' : ''}`);
+                    lines.push(`  ▶ 마진율 변화: ${this.signedNum((curMr - prevMr).toFixed(1))}%p`);
+                    hasAnyComparison = true;
+                }
+            }
+        }
+
+        if (!hasAnyComparison) return '';
+        return lines.join('\n');
+    }
+
+    signedFmt(n) {
+        const sign = n >= 0 ? '+' : '';
+        return sign + this.fmt(n);
+    }
+    signedNum(n) {
+        const num = Number(n);
+        return num >= 0 ? '+' + num : String(num);
+    }
+    signedPct(p) {
+        return (p >= 0 ? '+' : '') + p.toFixed(1) + '%';
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 2-C. 보조 컨텍스트 빌드
     // ─────────────────────────────────────────────────────────────
     buildContext(ent) {
         const out = [];
@@ -290,6 +470,7 @@ class AIAssistantModule {
     // ─────────────────────────────────────────────────────────────
     buildSystemPrompt(userMessage) {
         const ent = this.extractEntities(userMessage);
+        const cmpBlock = this.buildComparisonBlock(ent);
         const ctx = this.buildContext(ent);
         const today = new Date();
         const todayStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
@@ -307,6 +488,10 @@ class AIAssistantModule {
         if (ent.hasMargin) detected.push('마진분석');
         const detectedStr = detected.length > 0 ? detected.join(' / ') : '특정조건없음';
 
+        const cmpSection = cmpBlock
+            ? `\n${cmpBlock}\n\n⚠ 비교 질문이므로 위 [핵심 비교 결과] 블록의 수치를 그대로 사용하세요. 직접 계산하거나 추정하지 마세요.\n`
+            : '';
+
         return `당신은 침대(ACE)/가구(ESSA) 판매 매출 분석 전문 AI 어시스턴트입니다. 오늘은 ${todayStr}입니다.
 
 [데이터 구조]
@@ -316,16 +501,17 @@ class AIAssistantModule {
 
 [질문에서 감지한 조건]
 ${detectedStr}
-
+${cmpSection}
 [감지된 조건에 맞춰 미리 집계한 데이터]
 ${ctx}
 
-[답변 규칙]
-- 위 [집계 데이터]에 명시된 수치만 사용하세요. 데이터에 없는 항목은 "데이터에 없습니다"라고 답하세요.
-- 비교 분석 시 반드시 증감액(원)과 증감률(%)을 함께 제시하세요.
-- 한국어로 간결하고 실용적으로 작성하되, 핵심 수치는 굵게 강조하지 말고 일반 텍스트로 명시하세요.
-- 추측·일반론은 피하고 데이터에 근거하세요.
-- 답변 마지막에 한 줄로 핵심 인사이트 또는 다음 분석 추천을 덧붙이세요.`;
+[★ 답변 규칙 - 반드시 준수 ★]
+1. 위 [핵심 비교 결과]와 [집계 데이터]에 명시된 수치만 사용하세요. 데이터에 없는 수치는 절대 추정·생성하지 마세요.
+2. 절대 직접 계산(덧셈·뺄셈·곱셈·나눗셈)하지 마세요. 증감액·증감률·마진율은 [핵심 비교 결과] 블록에 이미 계산되어 있으니 그 값을 그대로 인용하세요.
+3. 데이터가 "데이터 없음"으로 표시된 경우 "해당 시점의 데이터가 데이터베이스에 없습니다"라고만 답하세요. 추정값을 만들어내지 마세요.
+4. 한국어로 간결하고 실용적으로 작성하세요. 핵심 수치는 일반 텍스트로 명시하세요(불필요한 굵게 강조 금지).
+5. 답변 마지막에 한 줄로 핵심 인사이트 또는 다음 분석 추천을 덧붙이세요.
+6. 위에 제공되지 않은 비교 시점이 있다면 "해당 시점은 사전 집계 범위 밖입니다"라고 명시하세요.`;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -352,7 +538,7 @@ ${ctx}
             model: selectedModel,
             prompt: fullPrompt,
             stream: false,
-            options: { temperature: 0.3, num_predict: 1024 }
+            options: { temperature: 0.1, num_predict: 1536, top_p: 0.9, repeat_penalty: 1.1 }
         });
 
         const response = await fetch(this.apiUrl, {
