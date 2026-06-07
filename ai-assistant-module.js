@@ -9,9 +9,11 @@ class AIAssistantModule {
     constructor(db, SQL) {
         this.db = db;
         this.SQL = SQL;
-        this.apiKey = 'sk-c47d975549724aa69122b84db54dd4cb';
-        this.apiUrl = 'https://yeosusquare.cloud/ollama/api/generate';
-        this.model = 'exaone3.5:7.8b';
+        // ⚠ Google AI Studio에서 발급한 Gemini API 키를 입력하세요. https://aistudio.google.com/apikey
+        this.apiKey = 'AIzaSyDdQXe0ZAt8D0bC_Z86Lw036CbjgopOFfc';
+        // Gemini OpenAI 호환 엔드포인트 (chat completions)
+        this.apiUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+        this.model = 'gemini-2.5-flash';
         this.chatHistory = [];   // 멀티턴 대화 누적
         this.isLoading = false;
         this._cachedSellers = null;
@@ -532,30 +534,37 @@ ${ctx}
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 4. Ollama API 호출
+    // 4. Gemini API 호출 (OpenAI 호환 chat completions)
     // ─────────────────────────────────────────────────────────────
-    async callOllama(userMessage) {
+    async callGemini(userMessage) {
+        if (!this.apiKey || this.apiKey === 'YOUR_GEMINI_API_KEY') {
+            throw new Error('Gemini API 키가 설정되지 않았습니다. ai-assistant-module.js의 this.apiKey 값을 실제 키로 교체하세요.');
+        }
+
         const selectedModel = document.getElementById('aiCtxModel')?.value || this.model;
         const systemPrompt = this.buildSystemPrompt(userMessage);
 
-        // 멀티턴: 직전 1~2턴만 포함 (컨텍스트 폭주 방지)
-        let history = '';
+        // OpenAI 호환 messages 구성: system + 최근 대화 이력 + 현재 질문
+        const messages = [{ role: 'system', content: systemPrompt }];
+
         if (this.chatHistory.length > 0) {
             const recent = this.chatHistory.slice(-4);
-            history = '\n\n[이전 대화 요약]\n' + recent.map(h => {
-                const tag = h.role === 'user' ? '사용자' : 'AI';
-                const c = h.content.length > 300 ? h.content.slice(0, 300) + '…' : h.content;
-                return `${tag}: ${c}`;
-            }).join('\n');
+            recent.forEach(h => {
+                const role = h.role === 'user' ? 'user' : 'assistant';
+                const c = h.content.length > 600 ? h.content.slice(0, 600) + '…' : h.content;
+                messages.push({ role, content: c });
+            });
         }
 
-        const fullPrompt = `${systemPrompt}${history}\n\n사용자 질문: ${userMessage}`;
+        messages.push({ role: 'user', content: userMessage });
 
         const body = JSON.stringify({
             model: selectedModel,
-            prompt: fullPrompt,
-            stream: false,
-            options: { temperature: 0.1, num_predict: 1536, top_p: 0.9, repeat_penalty: 1.1 }
+            messages: messages,
+            temperature: 0.1,
+            top_p: 0.9,
+            max_tokens: 2048,
+            stream: false
         });
 
         const response = await fetch(this.apiUrl, {
@@ -573,7 +582,7 @@ ${ctx}
         }
 
         const data = await response.json();
-        return data.response || '응답을 받지 못했습니다.';
+        return data.choices?.[0]?.message?.content || '응답을 받지 못했습니다.';
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -635,21 +644,14 @@ ${ctx}
                 <div>
                     <div class="ai-header-title">AI 매출 분석 어시스턴트</div>
                 </div>
-                <div class="ai-header-badge" id="aiModelBadge">EXAONE 3.5</div>
+                <div class="ai-header-badge" id="aiModelBadge">Gemini 2.5 Flash</div>
                 <button id="aiClearBtn" style="margin-left:auto;padding:6px 14px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;cursor:pointer;font-size:0.85em;color:#6c757d;">대화 초기화</button>
             </div>
             <div class="ai-context-bar">
                 <label>🤖 모델:</label>
                 <select id="aiCtxModel">
-                    <option value="exaone3.5:7.8b">EXAONE 3.5 7.8B (한국어 최적) ⭐</option>
-                    <option value="gemma2:9b">Gemma2 9B (균형형)</option>
-                    <option value="hermes3:8b">Hermes 3 8B (대화 특화)</option>
-                    <option value="deepseek-r1:8b">DeepSeek R1 8B (추론 특화)</option>
-                    <option value="qwen2.5-coder:7b">Qwen2.5 Coder 7B (분석/수식)</option>
-                    <option value="qwen2.5:3b">Qwen2.5 3B (빠름)</option>
-                    <option value="llama3.2:3b">Llama 3.2 3B (빠름)</option>
-                    <option value="gemma2:2b">Gemma2 2B (경량)</option>
-                    <option value="phi3:mini">Phi3 Mini (경량)</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (속도/비용 균형) ⭐</option>
+                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (저비용/빠름)</option>
                 </select>
                 <span id="aiCtxStatus" style="color:#667eea;font-weight:600;font-size:0.85em;margin-left:8px;">✅ 데이터 연결됨</span>
                 <div class="ai-tip">💡 질문에 브랜드(ACE/ESSA), 연도, 월, "전년 비교" 등을 자연어로 적어주세요. AI가 알아서 인식합니다.</div>
@@ -716,15 +718,8 @@ ${ctx}
         // 모델 변경 시 배지 업데이트
         document.getElementById('aiCtxModel')?.addEventListener('change', (e) => {
             const labels = {
-                'exaone3.5:7.8b': 'EXAONE 3.5',
-                'gemma2:9b': 'Gemma2 9B',
-                'hermes3:8b': 'Hermes 3',
-                'deepseek-r1:8b': 'DeepSeek R1',
-                'qwen2.5-coder:7b': 'Qwen2.5 Coder',
-                'qwen2.5:3b': 'Qwen2.5 3B',
-                'llama3.2:3b': 'Llama 3.2',
-                'gemma2:2b': 'Gemma2 2B',
-                'phi3:mini': 'Phi3 Mini'
+                'gemini-2.5-flash': 'Gemini 2.5 Flash',
+                'gemini-2.5-flash-lite': 'Gemini 2.5 Flash-Lite'
             };
             const badge = document.getElementById('aiModelBadge');
             if (badge) badge.textContent = labels[e.target.value] || e.target.value;
@@ -772,7 +767,7 @@ ${ctx}
         document.getElementById('aiSendBtn').disabled = true;
 
         try {
-            const reply = await this.callOllama(msg);
+            const reply = await this.callGemini(msg);
             document.getElementById(typingId)?.remove();
             this.appendMessage('ai', reply);
 
