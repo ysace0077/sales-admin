@@ -12,7 +12,7 @@ class AIAssistantModule {
         this.SQL = SQL;
         // ✅ Open WebUI의 Ollama 프록시 API 경로 (CORS 문제 없음)
         // 주의: "yeosuquare"가 아니라 "yeosusquare"입니다!
-        this.ollamaBaseUrl = 'https://yeosusquare.cloud/ollama/api';
+        this.ollamaBaseUrl = 'https://api.yeosusquare.cloud';
         this.defaultModel = 'exaone3.5:7.8b';
         this.chatHistory = [];
         this.isLoading = false;
@@ -514,7 +514,7 @@ ${ctx}
     // ─────────────────────────────────────────────────────────────
     async checkOllamaStatus() {
         try {
-            const r = await fetch(`${this.ollamaBaseUrl}/tags`, {
+            const r = await fetch(`${this.ollamaBaseUrl}/api/tags`, {
                 method: 'GET',
                 headers: { 'Accept': 'application/json' },
                 signal: AbortSignal.timeout(5000)
@@ -552,7 +552,7 @@ ${ctx}
         }
         messages.push({ role: 'user', content: userMessage });
 
-        const response = await fetch(`${this.ollamaBaseUrl}/chat`, {
+        const response = await fetch(`${this.ollamaBaseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
