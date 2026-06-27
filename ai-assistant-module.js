@@ -613,104 +613,116 @@ ${ctx}
 
         container.innerHTML = `
         <style>
-            .ai-wrap { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 600px; }
-            .ai-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 2px solid #e9ecef; flex-shrink: 0; flex-wrap: wrap; }
-            .ai-header-icon { font-size: 2em; }
-            .ai-header-title { font-size: 1.4em; font-weight: 700; color: #333; flex-grow: 1; }
-            .ai-header-badge { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: 600; }
-            .ai-control-bar { background: #f0f4ff; border-radius: 10px; padding: 10px 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; flex-wrap: wrap; font-size: 0.9em; }
+            /* ── AI 채팅 레이아웃 (가독성 최적화) ── */
+            .ai-wrap { background: white; border-radius: 15px; padding: 14px 16px 12px; box-shadow: 0 5px 20px rgba(0,0,0,0.1); display: flex; flex-direction: column; height: calc(100vh - 200px); min-height: 520px; }
+
+            /* 헤더: 1줄 압축 */
+            .ai-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1.5px solid #e9ecef; flex-shrink: 0; }
+            .ai-header-icon { font-size: 1.4em; }
+            .ai-header-title { font-size: 1.1em; font-weight: 700; color: #333; flex-grow: 1; }
+            .ai-header-badge { background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 600; white-space: nowrap; }
+
+            /* 컨트롤바: 1줄로 압축 */
+            .ai-control-bar { background: #f0f4ff; border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: wrap; font-size: 0.85em; }
             .ai-control-bar label { font-weight: 600; color: #667eea; white-space: nowrap; }
-            .ai-control-bar select { padding: 6px 10px; border: 1px solid #c5cae9; border-radius: 6px; background: white; cursor: pointer; font-size: 0.9em; min-width: 180px; }
-            .ai-control-bar select:disabled { opacity: 0.5; cursor: not-allowed; }
-            .ai-server-info { font-size: 0.8em; color: #888; margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-            .ai-quick-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; flex-shrink: 0; }
-            .ai-quick-btn { padding: 7px 12px; background: #f0f4ff; border: 1px solid #c5cae9; border-radius: 20px; font-size: 0.85em; cursor: pointer; color: #667eea; font-weight: 600; transition: all 0.2s; white-space: nowrap; }
+            .ai-control-bar select { padding: 4px 8px; border: 1px solid #c5cae9; border-radius: 6px; background: white; cursor: pointer; font-size: 0.85em; min-width: 160px; }
+            .ai-server-info { font-size: 0.78em; color: #888; margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+            /* 퀵버튼: 가로 스크롤 1줄 (줄바꿈 없음) */
+            .ai-quick-btns { display: flex; gap: 6px; margin-bottom: 8px; flex-shrink: 0; overflow-x: auto; padding-bottom: 3px; scrollbar-width: thin; }
+            .ai-quick-btns::-webkit-scrollbar { height: 3px; }
+            .ai-quick-btns::-webkit-scrollbar-thumb { background: #c5cae9; border-radius: 2px; }
+            .ai-quick-btn { padding: 5px 11px; background: #f0f4ff; border: 1px solid #c5cae9; border-radius: 16px; font-size: 0.8em; cursor: pointer; color: #667eea; font-weight: 600; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; }
             .ai-quick-btn:hover { background: #667eea; color: white; border-color: #667eea; }
+
+            /* 오프라인 경고: 1줄 */
+            .ai-offline-warn { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 6px 12px; font-size: 0.8em; color: #856404; margin-bottom: 8px; flex-shrink: 0; }
+
+            /* 채팅 메시지 영역: 최대한 크게 */
             .ai-main-area { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-            .ai-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 16px; background: #fafbfc; border-radius: 10px; border: 1px solid #e9ecef; }
-            .ai-msg { display: flex; gap: 12px; align-items: flex-start; max-width: 92%; }
+            .ai-messages { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; background: #fafbfc; border-radius: 10px; border: 1px solid #e9ecef; scroll-behavior: smooth; }
+
+            /* 메시지 버블 */
+            .ai-msg { display: flex; gap: 10px; align-items: flex-start; max-width: 88%; }
             .ai-msg.user { flex-direction: row-reverse; margin-left: auto; }
             .ai-msg.ai { margin-right: auto; }
-            .ai-msg-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.1em; flex-shrink: 0; }
+            .ai-msg-avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1em; flex-shrink: 0; margin-top: 2px; }
             .ai-msg.ai .ai-msg-avatar { background: linear-gradient(135deg, #667eea, #764ba2); }
             .ai-msg.user .ai-msg-avatar { background: linear-gradient(135deg, #43e97b, #38f9d7); }
-            .ai-msg-content { flex: 1; }
-            .ai-msg-bubble { padding: 12px 16px; border-radius: 16px; font-size: 0.95em; line-height: 1.75; word-break: break-word; }
-            .ai-msg.ai .ai-msg-bubble { background: white; color: #333; border: 1px solid #e9ecef; border-bottom-left-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-            .ai-msg.user .ai-msg-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-bottom-right-radius: 4px; }
-            .ai-msg-time { font-size: 0.75em; color: #aaa; margin-top: 4px; }
-            .ai-detected { font-size: 0.75em; color: #888; margin-bottom: 4px; padding: 3px 8px; background: #f5f5f5; border-radius: 6px; display: inline-block; }
-            .ai-typing { display: flex; gap: 5px; align-items: center; padding: 12px 16px; background: white; border-radius: 16px; border-bottom-left-radius: 4px; border: 1px solid #e9ecef; }
-            .ai-typing span { width: 8px; height: 8px; background: #667eea; border-radius: 50%; animation: typing 1.2s infinite; }
+            .ai-msg-content { flex: 1; min-width: 0; }
+            .ai-msg-bubble { padding: 10px 14px; border-radius: 14px; font-size: 0.93em; line-height: 1.8; word-break: break-word; white-space: pre-wrap; }
+            .ai-msg.ai .ai-msg-bubble { background: white; color: #222; border: 1px solid #e2e6ea; border-bottom-left-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+            .ai-msg.user .ai-msg-bubble { background: linear-gradient(135deg, #667eea, #764ba2); color: white; border-bottom-right-radius: 3px; }
+            .ai-msg-time { font-size: 0.72em; color: #bbb; margin-top: 3px; }
+            .ai-detected { font-size: 0.72em; color: #999; margin-bottom: 3px; padding: 2px 7px; background: #f0f0f0; border-radius: 5px; display: inline-block; }
+
+            /* 타이핑 애니메이션 */
+            .ai-typing { display: flex; gap: 5px; align-items: center; padding: 10px 14px; background: white; border-radius: 14px; border-bottom-left-radius: 3px; border: 1px solid #e2e6ea; }
+            .ai-typing span { width: 7px; height: 7px; background: #667eea; border-radius: 50%; animation: typing 1.2s infinite; }
             .ai-typing span:nth-child(2) { animation-delay: 0.2s; }
             .ai-typing span:nth-child(3) { animation-delay: 0.4s; }
-            @keyframes typing { 0%,60%,100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }
-            .ai-input-area { display: flex; gap: 10px; margin-top: 12px; flex-shrink: 0; align-items: flex-end; }
-            .ai-input { flex: 1; padding: 12px 16px; border: 2px solid #e1e5e9; border-radius: 20px; font-size: 0.95em; outline: none; resize: none; font-family: inherit; transition: border-color 0.2s; max-height: 120px; overflow-y: auto; }
+            @keyframes typing { 0%,60%,100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
+
+            /* 입력창 */
+            .ai-input-area { display: flex; gap: 8px; margin-top: 10px; flex-shrink: 0; align-items: flex-end; }
+            .ai-input { flex: 1; padding: 10px 16px; border: 2px solid #e1e5e9; border-radius: 18px; font-size: 0.93em; outline: none; resize: none; font-family: inherit; transition: border-color 0.2s; max-height: 100px; overflow-y: auto; line-height: 1.5; }
             .ai-input:focus { border-color: #667eea; }
-            .ai-send-btn { width: 46px; height: 46px; background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2em; transition: transform 0.2s; flex-shrink: 0; color: white; }
-            .ai-send-btn:hover { transform: scale(1.05); }
+            .ai-send-btn { width: 42px; height: 42px; background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.1em; transition: transform 0.2s; flex-shrink: 0; color: white; }
+            .ai-send-btn:hover { transform: scale(1.08); }
             .ai-send-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-            .ai-empty { text-align: center; padding: 60px 20px; color: #aaa; }
-            .ai-empty-icon { font-size: 4em; margin-bottom: 16px; }
-            .ai-empty-text { font-size: 1.1em; font-weight: 600; margin-bottom: 8px; color: #888; }
-            .ai-empty-sub { font-size: 0.9em; line-height: 1.6; }
-            .ai-offline-warn { background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px; padding: 10px 14px; font-size: 0.85em; color: #856404; margin-bottom: 12px; flex-shrink: 0; }
+
+            /* 빈 상태 */
+            .ai-empty { text-align: center; padding: 40px 20px; color: #aaa; }
+            .ai-empty-icon { font-size: 3em; margin-bottom: 12px; }
+            .ai-empty-text { font-size: 1em; font-weight: 600; margin-bottom: 6px; color: #999; }
+            .ai-empty-sub { font-size: 0.85em; line-height: 1.7; color: #bbb; }
+
+            /* 반응형 */
             @media (max-width: 768px) {
-                .ai-wrap { height: calc(100vh - 180px); padding: 16px; }
+                .ai-wrap { height: calc(100vh - 160px); padding: 10px 12px; }
                 .ai-msg { max-width: 96%; }
-                .ai-msg-bubble { font-size: 0.9em; }
-                .ai-quick-btns { gap: 6px; }
-                .ai-quick-btn { font-size: 0.8em; padding: 6px 10px; }
+                .ai-msg-bubble { font-size: 0.88em; padding: 8px 12px; }
+                .ai-quick-btn { font-size: 0.76em; padding: 4px 9px; }
+                .ai-header-title { font-size: 1em; }
             }
         </style>
         <div class="ai-wrap">
+            <!-- 헤더 (1줄 압축) -->
             <div class="ai-header">
                 <div class="ai-header-icon">🤖</div>
                 <div class="ai-header-title">AI 매출 분석 어시스턴트</div>
                 <div class="ai-header-badge" id="aiModelBadge">${this.defaultModel}</div>
-                <button id="aiClearBtn" style="padding:6px 14px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:8px;cursor:pointer;font-size:0.85em;color:#6c757d;">대화 초기화</button>
-            </div>
-
-            <div class="ai-control-bar">
-                <label>🖥️ 모델:</label>
-                <select id="aiCtxModel">
+                <select id="aiCtxModel" style="padding:3px 8px;border:1px solid #c5cae9;border-radius:6px;font-size:0.8em;cursor:pointer;">
                     ${modelOptions}
                 </select>
-                <div class="ai-server-info">
-                    <span>서버: ${this.ollamaBaseUrl}</span>
-                    ${connBadge}
-                    <button id="ollamaRefreshBtn" style="padding:4px 10px;background:white;border:1px solid #c5cae9;border-radius:6px;cursor:pointer;font-size:0.85em;">새로고침</button>
-                </div>
-                <div style="flex-basis:100%;font-size:0.8em;color:#888;margin-top:4px;">
-                    💡 질문에 브랜드(ACE/ESSA), 연도, 월, "전년 비교" 등을 자연어로 적어주세요.
-                </div>
+                <span class="ai-server-info">${connBadge}</span>
+                <button id="ollamaRefreshBtn" style="padding:3px 9px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;cursor:pointer;font-size:0.78em;color:#6c757d;">↺ 재연결</button>
+                <button id="aiClearBtn" style="padding:3px 9px;background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;cursor:pointer;font-size:0.78em;color:#6c757d;">🗑 초기화</button>
             </div>
 
             ${!this.ollamaConnected ? `
-            <div class="ai-offline-warn">
-                ⚠️ Ollama 서버(${this.ollamaBaseUrl})에 연결할 수 없습니다.
-                <br>🔧 fallback 모드로 일부 모델을 표시합니다. [새로고침]을 눌러 재시도하세요.
-            </div>` : ''}
+            <div class="ai-offline-warn">⚠️ ${this.ollamaBaseUrl} 연결 안됨 — K8 Plus 서버/Cloudflare Tunnel 상태 확인 후 [↺ 재연결] 클릭</div>` : ''}
 
+            <!-- 퀵버튼 (가로 스크롤) -->
             <div class="ai-quick-btns">
                 <button class="ai-quick-btn" data-q="ACE 2025년 6월 매출을 전년 동기와 비교 분석해줘">📊 ACE 6월 전년비교</button>
                 <button class="ai-quick-btn" data-q="ESSA 올해 월별 매출 추이를 분석해줘">📈 ESSA 올해 추이</button>
-                <button class="ai-quick-btn" data-q="ACE와 ESSA의 최근 2년 마진율을 비교 분석해줘">💰 양 브랜드 마진비교</button>
+                <button class="ai-quick-btn" data-q="ACE와 ESSA의 최근 2년 마진율을 비교 분석해줘">💰 마진비교</button>
                 <button class="ai-quick-btn" data-q="ACE 판매자별 실적 차이를 분석하고 상위 판매자의 강점을 추정해줘">👤 판매자 분석</button>
                 <button class="ai-quick-btn" data-q="ACE 지역별 매출 TOP5와 그 특성을 분석해줘">📍 지역 TOP5</button>
-                <button class="ai-quick-btn" data-q="ESSA 구매용도별 매출 비중과 시사점을 분석해줘">🛋️ 구매용도 분석</button>
+                <button class="ai-quick-btn" data-q="ESSA 구매용도별 매출 비중과 시사점을 분석해줘">🛋️ 구매용도</button>
                 <button class="ai-quick-btn" data-q="양 브랜드 모두 작년 대비 올해 성장률을 분석해줘">🚀 성장률 비교</button>
                 <button class="ai-quick-btn" data-q="매출 증대를 위한 구체적 전략을 제안해줘">💡 전략 제안</button>
             </div>
 
+            <!-- 채팅 메시지 (최대 영역) -->
             <div class="ai-main-area">
                 <div class="ai-messages" id="aiMessages">
                     <div class="ai-empty">
                         <div class="ai-empty-icon">💬</div>
                         <div class="ai-empty-text">자연어로 자유롭게 물어보세요</div>
                         <div class="ai-empty-sub">
-                            예) "ACE 2025년 6월 매출을 작년 같은 달과 비교해줘"<br>
+                            예) "ACE 2026년 6월 매출을 작년 같은 달과 비교해줘"<br>
                             "ESSA 올해 월별 흐름과 마진율 추이"<br>
                             "판매자별 실적 TOP10 분석해줘"
                         </div>
@@ -718,8 +730,9 @@ ${ctx}
                 </div>
             </div>
 
+            <!-- 입력창 -->
             <div class="ai-input-area">
-                <textarea class="ai-input" id="aiInput" placeholder="자연어로 질문하세요. (Shift+Enter: 줄바꿈)" rows="1"></textarea>
+                <textarea class="ai-input" id="aiInput" placeholder="질문을 입력하세요. (Enter: 전송 / Shift+Enter: 줄바꿈)" rows="1"></textarea>
                 <button class="ai-send-btn" id="aiSendBtn">➤</button>
             </div>
         </div>`;
