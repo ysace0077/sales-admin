@@ -677,13 +677,51 @@ ${ctx}
             .ai-empty-text { font-size: 1em; font-weight: 600; margin-bottom: 6px; color: #999; }
             .ai-empty-sub { font-size: 0.85em; line-height: 1.7; color: #bbb; }
 
-            /* 반응형 */
+            /* 반응형 모바일 */
             @media (max-width: 768px) {
-                .ai-wrap { height: calc(100vh - 160px); padding: 10px 12px; }
-                .ai-msg { max-width: 96%; }
-                .ai-msg-bubble { font-size: 0.88em; padding: 8px 12px; }
-                .ai-quick-btn { font-size: 0.76em; padding: 4px 9px; }
-                .ai-header-title { font-size: 1em; }
+                .ai-wrap {
+                    height: calc(100vh - 130px);
+                    padding: 8px 10px 8px;
+                    border-radius: 10px;
+                    min-height: 0;
+                }
+                /* 헤더: 2줄 허용, 버튼 최소화 */
+                .ai-header {
+                    gap: 6px;
+                    margin-bottom: 6px;
+                    padding-bottom: 6px;
+                    flex-wrap: wrap;
+                }
+                .ai-header-icon { display: none; }
+                .ai-header-title { font-size: 0.95em; }
+                .ai-header-badge { font-size: 0.7em; padding: 2px 7px; }
+                #aiCtxModel { font-size: 0.75em; min-width: 120px; padding: 2px 6px; }
+                #ollamaRefreshBtn, #aiClearBtn { font-size: 0.72em; padding: 2px 7px; }
+
+                /* 오프라인 경고 1줄 */
+                .ai-offline-warn { font-size: 0.75em; padding: 4px 10px; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+                /* 퀵버튼 더 작게 */
+                .ai-quick-btns { gap: 5px; margin-bottom: 6px; }
+                .ai-quick-btn { font-size: 0.74em; padding: 4px 9px; }
+
+                /* 메시지 버블 */
+                .ai-msg { max-width: 97%; gap: 7px; }
+                .ai-msg-avatar { width: 26px; height: 26px; font-size: 0.85em; }
+                .ai-msg-bubble { font-size: 0.88em; padding: 8px 11px; line-height: 1.7; }
+                .ai-msg-time { font-size: 0.68em; }
+                .ai-detected { font-size: 0.68em; }
+
+                /* 입력창 */
+                .ai-input-area { margin-top: 7px; gap: 6px; }
+                .ai-input { font-size: 0.88em; padding: 8px 13px; border-radius: 16px; }
+                .ai-send-btn { width: 38px; height: 38px; font-size: 1em; }
+
+                /* 빈 상태 */
+                .ai-empty { padding: 20px 16px; }
+                .ai-empty-icon { font-size: 2.2em; margin-bottom: 8px; }
+                .ai-empty-text { font-size: 0.9em; }
+                .ai-empty-sub { font-size: 0.8em; }
             }
         </style>
         <div class="ai-wrap">
