@@ -743,8 +743,8 @@ ${ctx}
 
             <!-- 퀵버튼 (가로 스크롤) -->
             <div class="ai-quick-btns">
-                <button class="ai-quick-btn" data-q="ACE와 ESSA 올해 당월까지 누계 매출을 전년 동기와 비교 분석해줘">📊 ACE+ESSA 매출 전년비교</button>
-                <button class="ai-quick-btn" data-q="ESSA 올해 월별 매출 추이를 분석해줘">📈 ESSA 올해 추이</button>
+                <button class="ai-quick-btn" data-q="ACE와 ESSA 올해 당월 매출을 전년 동기와 비교 분석해줘">📊 침대/소파 당월 전년비교</button>
+                <button class="ai-quick-btn" data-q="ACE와 ESSA 올해 월별 매출 추이를 분석해줘">📈 침대/소파 올해 추이</button>
                 <button class="ai-quick-btn" data-q="ACE와 ESSA의 최근 2년 마진율을 비교 분석해줘">💰 마진비교</button>
                 <button class="ai-quick-btn" data-q="ACE 판매자별 실적 차이를 분석하고 상위 판매자의 강점을 추정해줘">👤 판매자 분석</button>
                 <button class="ai-quick-btn" data-q="ACE 지역별 매출 TOP5와 그 특성을 분석해줘">📍 지역 TOP5</button>
